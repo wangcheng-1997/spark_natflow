@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.zjtuojing.natflow</groupId>
+    <artifactId>spark-natflow</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <repositories>
+        <repository>
+            <id>cloudera</id>
+            <url>https://repository.cloudera.com/artifactory/cloudera-repos/</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-core_2.11</artifactId>
+            <version>2.2.3</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-sql_2.11</artifactId>
+            <version>2.2.3</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-streaming_2.11</artifactId>
+            <version>2.2.3</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-streaming-kafka-0-8_2.11</artifactId>
+            <version>2.2.3</version>
+        </dependency>
+
+        <dependency>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+            <version>2.9.0</version>
+        </dependency>
+
+
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>fastjson</artifactId>
+            <version>1.2.36</version>
+        </dependency>
+
+
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>5.1.43</version>
+        </dependency>
+
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.5</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.elasticsearch</groupId>
+            <artifactId>elasticsearch-spark-20_2.11</artifactId>
+            <version>6.5.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>commons-httpclient</groupId>
+            <artifactId>commons-httpclient</artifactId>
+            <version>3.1</version>
+        </dependency>
+
+
+        <dependency>
+            <groupId>org.scalikejdbc</groupId>
+            <artifactId>scalikejdbc_2.11</artifactId>
+            <version>3.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.scalikejdbc</groupId>
+            <artifactId>scalikejdbc-core_2.11</artifactId>
+            <version>3.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.scalikejdbc</groupId>
+            <artifactId>scalikejdbc-config_2.11</artifactId>
+            <version>3.3.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>1</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hbase-client-1.2.3.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>2</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hbase-common-1.2.3.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>3</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hbase-hadoop-compat-1.2.3.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>4</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hbase-procedure-1.2.3.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>5</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hbase-protocol-1.2.3.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>6</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hbase-server-1.2.3.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>7</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hbase-thrift-1.2.3.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>8</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hadoop-annotations-2.7.1.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>9</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hadoop-auth-2.7.1.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>10</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/hadoop-common-2.7.1.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>local</groupId>
+            <artifactId>11</artifactId>
+            <version>2.8</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/lib/guava-12.0.1.jar</systemPath>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.htrace</groupId>
+            <artifactId>htrace-core</artifactId>
+            <version>3.2.0-incubating</version>
+        </dependency>
+
+
+        <!-- https://mvnrepository.com/artifact/org.apache.hadoop/hadoop-yarn-api -->
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-yarn-api</artifactId>
+            <version>2.6.0</version>
+        </dependency>
+
+
+        <!-- https://mvnrepository.com/artifact/org.apache.hadoop/hadoop-client -->
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-client</artifactId>
+            <version>2.6.0</version>
+        </dependency>
+
+    </dependencies>
+    <build>
+        <resources>
+            <resource>
+                <directory>lib</directory>
+                <targetPath>/BOOT-INF/lib/</targetPath>
+                <includes>
+                    <include>**/*.jar</include>
+                </includes>
+            </resource>
+        </resources>
+        <pluginManagement>
+            <plugins>
+                <!-- 编译scala的插件 -->
+                <plugin>
+                    <groupId>net.alchim31.maven</groupId>
+                    <artifactId>scala-maven-plugin</artifactId>
+                    <version>3.2.2</version>
+                </plugin>
+                <!-- 编译java的插件 -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.5.1</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>net.alchim31.maven</groupId>
+                <artifactId>scala-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>scala-compile-first</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>add-source</goal>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>scala-test-compile</id>
+                        <phase>process-test-resources</phase>
+                        <goals>
+                            <goal>testCompile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <source>8</source>
+                    <target>8</target>
+                </configuration>
+            </plugin>
+
+            <!-- 打jar插件 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>2.4.3</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
