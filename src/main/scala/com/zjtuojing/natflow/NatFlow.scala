@@ -6,20 +6,18 @@ import java.util.Date
 
 import com.zjtuojing.natflow.BeanClass.NATBean
 import kafka.common.TopicAndPartition
-import kafka.message.MessageAndMetadata
 import kafka.serializer.StringDecoder
-import org.apache.hadoop.hbase.client.{BufferedMutator, HTable, Mutation, Put}
+import org.apache.hadoop.hbase.HBaseConfiguration
+import org.apache.hadoop.hbase.client.Put
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapred.TableOutputFormat
 import org.apache.hadoop.hbase.util.Bytes
-import org.apache.hadoop.hbase.{HBaseConfiguration, TableName}
 import org.apache.hadoop.mapred.JobConf
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.dstream.InputDStream
-import org.apache.spark.streaming.kafka.KafkaCluster.Err
-import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaCluster, KafkaUtils, OffsetRange}
+import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaUtils, OffsetRange}
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.elasticsearch.spark.rdd.EsSpark
@@ -48,7 +46,7 @@ object NatFlow {
     val Array(batchDuration) = args
     val sparkConf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-//      .setMaster("local[*]")
+      .setMaster("local[*]")
       .set("spark.streaming.kafka.maxRatePerPartition", properties.getProperty("kafka.maxRatePerPartition"))
       .set("es.port", properties.getProperty("es.port"))
       .set("es.nodes", properties.getProperty("es.nodes"))
@@ -127,7 +125,7 @@ object NatFlow {
           .map(per => {
             val strings1: Array[String] = per(0).split("\\s+")
             val strings2: Array[String] = per(1).split(" snat to ")
-            val date: Long = dateFormat.parse(strings1(0).replaceAll("T", " ").substring(0, 15)+"0:00")
+            val date: Long = dateFormat.parse(strings1(0).replaceAll("T", " ").substring(0, 15) + "0:00")
               .getTime / 1000
             val hostIP = strings1(1)
             val corresponds = strings1(6).split("[->()]")
@@ -147,21 +145,28 @@ object NatFlow {
             val convertedIp = convertedIpPort.split(":")(0)
             val convertedPort = convertedIpPort.split(":")(1)
 
-            val maps = util.IpSearch.getRegionByIp(convertedIp)
-            //            val map = IpSearch.getRegionByIp("192.168.15.100")
             // 获取运营商
-            val operate = maps.get("运营").toString
+            var operate = "UnKnown"
             //获取省份
-            val province = maps.get("省份").toString
+            var province = "UnKnown"
             //获取城市
-            val city = maps.get("城市").toString
+            var city = "UnKnown"
+
+            val maps = util.IpSearch.getRegionByIp(targetIp)
+
+            if (!maps.isEmpty) {
+              operate = maps.get("运营").toString
+              province = maps.get("省份").toString
+              city = maps.get("城市").toString
+            }
+
             val username = users.value.getOrElse(sourceIp, "UnKnown")
             val rowkey = MyUtils.MD5Encode(sourceIp + sourcePort + targetIp + targetPort + convertedIp + convertedPort).substring(8, 24) + "_" + date
 
-
             NATBean(date, hostIP, sourceIp, sourcePort, targetIp, targetPort, protocol, convertedIp, convertedPort, operate, province, city, username, rowkey)
           })
-          .filter(_.username!="UnKnown")
+          .filter(_.username != "UnKnown")
+          .filter(_.operator != "UnKnown")
           .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
         //TODO 1 province维度聚合
@@ -206,7 +211,7 @@ object NatFlow {
         val value: RDD[NATBean] = ssc.sparkContext.parallelize(baseRDD.collect())
 
         //ES实现hbase二级索引
-        val rowkeys: RDD[Map[String, Any]] = value.filter(_.username!="UnKnown").map(per => {
+        val rowkeys: RDD[Map[String, Any]] = value.filter(_.username != "UnKnown").map(per => {
           Map("accesstime" -> per.accesstime,
             "sourceIp" -> per.sourceIp,
             "sourcePort" -> per.sourcePort,
@@ -217,7 +222,7 @@ object NatFlow {
             "rowkey" -> per.rowkey
           )
         })
-        EsSpark.saveToEs(rowkeys,s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase",Map("es.mapping.id" -> "rowkey"))
+        EsSpark.saveToEs(rowkeys, s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase", Map("es.mapping.id" -> "rowkey"))
 
         val tableName = "syslog"
         val conf = HBaseConfiguration.create()
@@ -227,21 +232,21 @@ object NatFlow {
         jobConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
         jobConf.setOutputFormat(classOf[TableOutputFormat])
 
-        value.filter(_.username!="UnKnown").map(per => {
+        value.filter(_.username != "UnKnown").map(per => {
 
-            val rowkey = Bytes.toBytes(per.rowkey)
+          val rowkey = Bytes.toBytes(per.rowkey)
 
-            val put = new Put(rowkey)
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(dateFormat.format(per.accesstime * 1000)))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("hostIP"), Bytes.toBytes(per.hostIP))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(per.sourceIp))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(per.sourcePort))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(per.targetIp))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(per.targetPort))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(per.protocol))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(per.convertedIp))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(per.convertedPort))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(per.username))
+          val put = new Put(rowkey)
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(dateFormat.format(per.accesstime * 1000)))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("hostIP"), Bytes.toBytes(per.hostIP))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(per.sourceIp))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(per.sourcePort))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(per.targetIp))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(per.targetPort))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(per.protocol))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(per.convertedIp))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(per.convertedPort))
+          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(per.username))
           (new ImmutableBytesWritable, put)
         }).saveAsHadoopDataset(jobConf)
 
@@ -274,38 +279,38 @@ object NatFlow {
     }
 
     val stream =
-//      if (fromOffsets.size == 0) { // 假设程序第一次启动
-        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topics)
-//      } else {
-//        var checkedOffset = Map[TopicAndPartition, Long]()
-//        val kafkaCluster = new KafkaCluster(kafkaParams)
-//        val earliestLeaderOffsets: Either[Err, Map[TopicAndPartition, KafkaCluster.LeaderOffset]] = kafkaCluster.getEarliestLeaderOffsets(fromOffsets.keySet)
-//
-//        val latestLeaderOffsets = kafkaCluster.getLatestLeaderOffsets(fromOffsets.keySet)
-//
-//        if (earliestLeaderOffsets.isRight) {
-//          val topicAndPartitionToOffset = earliestLeaderOffsets.right.get
-//          val topicAndPartitionLatestLeaderOffset = latestLeaderOffsets.right.get
-//          //           开始对比
-//          checkedOffset = fromOffsets.map(owner => {
-//            val clusterEarliestOffset = topicAndPartitionToOffset.get(owner._1).get.offset
-//            val clusterLateastOffset = topicAndPartitionLatestLeaderOffset.get(owner._1).get.offset
-//
-//            if (owner._2 >= clusterEarliestOffset) {
-//              if (owner._2 <= clusterLateastOffset) {
-//                owner
-//              } else {
-//                (owner._1, clusterLateastOffset)
-//              }
-//            } else {
-//              (owner._1, clusterLateastOffset)
-//            }
-//          })
-//        }
-//        // 程序非第一次启动
-//        val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
-//        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
-//      }
+    //      if (fromOffsets.size == 0) { // 假设程序第一次启动
+      KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topics)
+    //      } else {
+    //        var checkedOffset = Map[TopicAndPartition, Long]()
+    //        val kafkaCluster = new KafkaCluster(kafkaParams)
+    //        val earliestLeaderOffsets: Either[Err, Map[TopicAndPartition, KafkaCluster.LeaderOffset]] = kafkaCluster.getEarliestLeaderOffsets(fromOffsets.keySet)
+    //
+    //        val latestLeaderOffsets = kafkaCluster.getLatestLeaderOffsets(fromOffsets.keySet)
+    //
+    //        if (earliestLeaderOffsets.isRight) {
+    //          val topicAndPartitionToOffset = earliestLeaderOffsets.right.get
+    //          val topicAndPartitionLatestLeaderOffset = latestLeaderOffsets.right.get
+    //          //           开始对比
+    //          checkedOffset = fromOffsets.map(owner => {
+    //            val clusterEarliestOffset = topicAndPartitionToOffset.get(owner._1).get.offset
+    //            val clusterLateastOffset = topicAndPartitionLatestLeaderOffset.get(owner._1).get.offset
+    //
+    //            if (owner._2 >= clusterEarliestOffset) {
+    //              if (owner._2 <= clusterLateastOffset) {
+    //                owner
+    //              } else {
+    //                (owner._1, clusterLateastOffset)
+    //              }
+    //            } else {
+    //              (owner._1, clusterLateastOffset)
+    //            }
+    //          })
+    //        }
+    //        // 程序非第一次启动
+    //        val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
+    //        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
+    //      }
     stream
   }
 }
