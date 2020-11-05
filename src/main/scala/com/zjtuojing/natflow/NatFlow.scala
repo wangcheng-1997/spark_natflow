@@ -9,8 +9,11 @@ import kafka.common.TopicAndPartition
 import kafka.message.MessageAndMetadata
 import kafka.serializer.StringDecoder
 import org.apache.hadoop.hbase.client.{BufferedMutator, HTable, Mutation, Put}
+import org.apache.hadoop.hbase.io.ImmutableBytesWritable
+import org.apache.hadoop.hbase.mapred.TableOutputFormat
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.hbase.{HBaseConfiguration, TableName}
+import org.apache.hadoop.mapred.JobConf
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
@@ -217,14 +220,14 @@ object NatFlow {
         EsSpark.saveToEs(rowkeys,s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase",Map("es.mapping.id" -> "rowkey"))
 
         val tableName = "syslog"
+        val conf = HBaseConfiguration.create()
+        val jobConf = new JobConf(conf)
+        jobConf.set("hbase.zookeeper.quorum", "30.250.60.2,30.250.60.3,30.250.60.5,30.250.60.6,30.250.60.7")
+        jobConf.set("zookeeper.znode.parent", "/hbase")
+        jobConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
+        jobConf.setOutputFormat(classOf[TableOutputFormat])
 
-        value.filter(_.username!="UnKnown").foreachPartition(per => {
-          val table = HbaseUtils.getHTable("30.250.60.2,30.250.60.3,30.250.60.5,30.250.60.6,30.250.60.7","2181",tableName)
-
-          table.setAutoFlush(false, false)
-          table.setWriteBufferSize(1024 * 1024 * 3)
-
-          per.foreach(per => {
+        value.filter(_.username!="UnKnown").map(per => {
 
             val rowkey = Bytes.toBytes(per.rowkey)
 
@@ -239,11 +242,8 @@ object NatFlow {
             put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(per.convertedIp))
             put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(per.convertedPort))
             put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(per.username))
-            table.put(put)
-          })
-          table.flushCommits()
-          table.close()
-        })
+          (new ImmutableBytesWritable, put)
+        }).saveAsHadoopDataset(jobConf)
 
         offset2Mysql(offsetRanges, groupId, "nat_offset", connection1)
       }
