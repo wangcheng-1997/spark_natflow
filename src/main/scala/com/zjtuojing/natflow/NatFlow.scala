@@ -245,6 +245,8 @@ object NatFlow {
           (new ImmutableBytesWritable, put)
         }).saveAsHadoopDataset(jobConf)
 
+        baseRDD.unpersist()
+
         offset2Mysql(offsetRanges, groupId, "nat_offset", connection1)
       }
     })
