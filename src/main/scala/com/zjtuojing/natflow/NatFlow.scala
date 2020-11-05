@@ -46,7 +46,7 @@ object NatFlow {
     val Array(batchDuration) = args
     val sparkConf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-      .setMaster("local[*]")
+//      .setMaster("local[*]")
       .set("spark.streaming.kafka.maxRatePerPartition", properties.getProperty("kafka.maxRatePerPartition"))
       .set("es.port", properties.getProperty("es.port"))
       .set("es.nodes", properties.getProperty("es.nodes"))
