@@ -167,6 +167,7 @@ object NatFlow {
           })
           .filter(_.username != "UnKnown")
           .filter(_.operator != "UnKnown")
+          .filter(_.operator != "None")
           .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
         //TODO 1 province维度聚合
