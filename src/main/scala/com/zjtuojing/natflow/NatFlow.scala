@@ -23,6 +23,7 @@ import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaCluster, KafkaUti
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.elasticsearch.spark.rdd.EsSpark
+import org.slf4j.{Logger, LoggerFactory}
 
 /**
  * ClassName Flowmsg2HDFS
@@ -197,7 +198,7 @@ object NatFlow {
         }).reduceByKey(_ + _)
           .filter(_._2 > 10).map(per => (per._1._1, per._1._2, per._2))
           .coalesce(1)
-          .saveAsTextFile(s"hdfs://nns/NATIp/${now.substring(0, 8)}/${now.substring(8)}")
+//          .saveAsTextFile(s"hdfs://nns/NATIp/${now.substring(0, 8)}/${now.substring(8)}")
 
         //TODO 4 省会维度聚合
         val city = baseRDD
@@ -208,6 +209,9 @@ object NatFlow {
         EsSpark.saveToEs(province, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(operator, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(city, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
+
+//        val logger: Logger = LoggerFactory.getLogger(this.getClass)
+//        logger.info(s"${province.count()+operator.count()+city.count()}")
 
         val value: RDD[NATBean] = ssc.sparkContext.parallelize(baseRDD.collect())
 
@@ -251,6 +255,7 @@ object NatFlow {
           (new ImmutableBytesWritable, put)
         }).saveAsHadoopDataset(jobConf)
 
+        base.unpersist()
         baseRDD.unpersist()
 
         offset2Mysql(offsetRanges, groupId, "nat_offset", connection1)
