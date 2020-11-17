@@ -23,7 +23,6 @@ import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaCluster, KafkaUti
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.elasticsearch.spark.rdd.EsSpark
-import org.slf4j.{Logger, LoggerFactory}
 
 /**
  * ClassName Flowmsg2HDFS
@@ -198,7 +197,7 @@ object NatFlow {
         }).reduceByKey(_ + _)
           .filter(_._2 > 10).map(per => (per._1._1, per._1._2, per._2))
           .coalesce(1)
-//          .saveAsTextFile(s"hdfs://nns/NATIp/${now.substring(0, 8)}/${now.substring(8)}")
+          .saveAsTextFile(s"hdfs://nns/NATIp/${now.substring(0, 8)}/${now.substring(8)}")
 
         //TODO 4 省会维度聚合
         val city = baseRDD
@@ -285,38 +284,38 @@ object NatFlow {
     }
 
     val stream =
-          if (fromOffsets.size == 0) { // 假设程序第一次启动
-      KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topics)
-          } else {
-            var checkedOffset = Map[TopicAndPartition, Long]()
-            val kafkaCluster = new KafkaCluster(kafkaParams)
-            val earliestLeaderOffsets: Either[Err, Map[TopicAndPartition, KafkaCluster.LeaderOffset]] = kafkaCluster.getEarliestLeaderOffsets(fromOffsets.keySet)
+      if (fromOffsets.size == 0) { // 假设程序第一次启动
+        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topics)
+      } else {
+        var checkedOffset = Map[TopicAndPartition, Long]()
+        val kafkaCluster = new KafkaCluster(kafkaParams)
+        val earliestLeaderOffsets: Either[Err, Map[TopicAndPartition, KafkaCluster.LeaderOffset]] = kafkaCluster.getEarliestLeaderOffsets(fromOffsets.keySet)
 
-            val latestLeaderOffsets = kafkaCluster.getLatestLeaderOffsets(fromOffsets.keySet)
+        val latestLeaderOffsets = kafkaCluster.getLatestLeaderOffsets(fromOffsets.keySet)
 
-            if (earliestLeaderOffsets.isRight) {
-              val topicAndPartitionToOffset = earliestLeaderOffsets.right.get
-              val topicAndPartitionLatestLeaderOffset = latestLeaderOffsets.right.get
-              //           开始对比
-              checkedOffset = fromOffsets.map(owner => {
-                val clusterEarliestOffset = topicAndPartitionToOffset.get(owner._1).get.offset
-                val clusterLateastOffset = topicAndPartitionLatestLeaderOffset.get(owner._1).get.offset
+        if (earliestLeaderOffsets.isRight) {
+          val topicAndPartitionToOffset = earliestLeaderOffsets.right.get
+          val topicAndPartitionLatestLeaderOffset = latestLeaderOffsets.right.get
+          //           开始对比
+          checkedOffset = fromOffsets.map(owner => {
+            val clusterEarliestOffset = topicAndPartitionToOffset.get(owner._1).get.offset
+            val clusterLateastOffset = topicAndPartitionLatestLeaderOffset.get(owner._1).get.offset
 
-                if (owner._2 >= clusterEarliestOffset) {
-                  if (owner._2 <= clusterLateastOffset) {
-                    owner
-                  } else {
-                    (owner._1, clusterLateastOffset)
-                  }
-                } else {
-                  (owner._1, clusterLateastOffset)
-                }
-              })
+            if (owner._2 >= clusterEarliestOffset) {
+              if (owner._2 <= clusterLateastOffset) {
+                owner
+              } else {
+                (owner._1, clusterLateastOffset)
+              }
+            } else {
+              (owner._1, clusterLateastOffset)
             }
-            // 程序非第一次启动
-            val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
-            KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
-          }
+          })
+        }
+        // 程序非第一次启动
+        val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
+        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
+      }
     stream
   }
 }
