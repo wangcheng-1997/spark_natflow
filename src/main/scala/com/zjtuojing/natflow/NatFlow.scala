@@ -1,6 +1,6 @@
 package com.zjtuojing.natflow
 
-import java.sql.{Connection, DriverManager, Statement}
+import java.sql.{Connection, DriverManager, ResultSet, Statement}
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -172,7 +172,15 @@ object NatFlow {
 
         val statement2: Statement = connection1.createStatement()
 
-        statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${dateFormat.format(System.currentTimeMillis())}')")
+        val last_value: ResultSet = statement2.executeQuery("select count_min from nat_count order by seq desc limit 1")
+
+        val longs = new collection.mutable.ListBuffer[Long]
+
+        while (last_value.next()) longs += last_value.getLong(1)
+
+        if (longs.length == 0 || longs(0) * 1.5 >= nat_count) {
+          statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${dateFormat.format(System.currentTimeMillis())}')")
+        }
 
           val baseRDD = base.filter(_.username != "UnKnown")
           .filter(_.operator != "UnKnown")
