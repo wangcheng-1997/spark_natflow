@@ -17,7 +17,7 @@ object NatCounter {
     val properties: Properties = MyUtils.loadConf()
 
     val conf = new SparkConf()
-//      .setMaster("local[*]")
+      //      .setMaster("local[*]")
       .setAppName(this.getClass.getSimpleName)
 
     val spark = SparkSession.builder().config(conf).getOrCreate()
@@ -75,15 +75,15 @@ object NatCounter {
     }
     val sum1 = nat_count.sum
     val sum2 = nat_hbase_count.sum
-    val date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(lower*1000)
+    val date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(lower * 1000)
 
     DB.localTx { implicit session =>
       SQL("insert into nat_count_day (count_day,date) values (?,?)")
-        .bind(sum1,date)
+        .bind(sum1, date)
         .update()
         .apply()
       SQL("insert into nat_hbase_count_day (count_day,date) values (?,?)")
-        .bind(sum2,date)
+        .bind(sum2, date)
         .update()
         .apply()
     }
