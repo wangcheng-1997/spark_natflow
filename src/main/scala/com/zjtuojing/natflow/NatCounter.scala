@@ -29,7 +29,7 @@ object NatCounter {
 
     // 指定数据库连接url，userName，password
 
-    val url = properties.getProperty("mysql.url")
+    val url = "jdbc:mysql://30.250.60.35:3306/nat_log?characterEncoding=utf-8&useSSL=false"
 
     val userName = properties.getProperty("mysql.username")
 

@@ -69,6 +69,7 @@ object NatFlow {
     //    // 指定数据库连接url，userName，password
     val url1 = properties.getProperty("mysql.url")
     val url2 = "jdbc:mysql://30.250.11.142:3306/broadband?characterEncoding=utf-8&useSSL=false"
+    val url3 = "jdbc:mysql://30.250.60.35:3306/nat_log?characterEncoding=utf-8&useSSL=false"
     val userName1 = properties.getProperty("mysql.username")
     val password1 = properties.getProperty("mysql.password")
     //    ConnectionPool.singleton(url1, userName1, password1)
@@ -80,6 +81,7 @@ object NatFlow {
     //得到连接
     val offset_connection: Connection = DriverManager.getConnection(url1, userName1, password1)
     val username_connection = DriverManager.getConnection(url2, userName1, password1)
+    val natlog_connection = DriverManager.getConnection(url3, userName1, password1)
 
     //    DBs.setupAll()
 
@@ -90,7 +92,7 @@ object NatFlow {
     )
 
     //TODO  NAT日志解析
-    NATAnalyze(kafkaParams, "syslog", ssc, "syslog", "nat_offset", offset_connection, username_connection)
+    NATAnalyze(kafkaParams, "syslog", ssc, "syslog", "nat_offset", offset_connection, username_connection, natlog_connection)
 
     ssc.start()
     ssc.awaitTermination()
@@ -98,7 +100,7 @@ object NatFlow {
 
   }
 
-  def NATAnalyze(params: Map[String, String], groupId: String, ssc: StreamingContext, topic: String, tableName: String, connection1: Connection, connection2: Connection): Unit = {
+  def NATAnalyze(params: Map[String, String], groupId: String, ssc: StreamingContext, topic: String, tableName: String, connection1: Connection, connection2: Connection, connection3: Connection): Unit = {
     //TODO 设置kafka相关参数
     val kafkaParams = params + ("group.id" -> groupId)
     val stream = createDirectStream(ssc, kafkaParams, topic, tableName, groupId, connection1)
@@ -111,10 +113,10 @@ object NatFlow {
         //获取rdd在kafka中的偏移量信息
         val offsetRanges = rdd.asInstanceOf[HasOffsetRanges].offsetRanges
 
-        val statement = connection2.createStatement
+        val statement1 = connection2.createStatement
 
         var usernames = Map[String, String]()
-        val username = statement.executeQuery(s"""select framedip,loginname from aaa_bb_online""")
+        val username = statement1.executeQuery(s"""select framedip,loginname from aaa_bb_online""")
         while (username.next) {
           usernames ++= Map(username.getString("framedip") -> username.getString("loginname"))
         }
@@ -170,7 +172,7 @@ object NatFlow {
 
         val nat_count = base.count()
 
-        val statement2: Statement = connection1.createStatement()
+        val statement2: Statement = connection3.createStatement()
 
         val last_value: ResultSet = statement2.executeQuery("select count_min from nat_count order by seq desc limit 1")
 
@@ -178,9 +180,9 @@ object NatFlow {
 
         while (last_value.next()) longs += last_value.getLong(1)
 
-        if (longs.length == 0 || longs(0) * 1.5 >= nat_count) {
+//        if (longs.length == 0 || longs(0) * 1.5 >= nat_count) {
           statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${dateFormat.format(System.currentTimeMillis())}')")
-        }
+//        }
 
           val baseRDD = base.filter(_.username != "UnKnown")
           .filter(_.operator != "UnKnown")
@@ -235,7 +237,7 @@ object NatFlow {
           )
         })
 
-        statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,update_time) values ('${rowkeys.count()}','${dateFormat.format(System.currentTimeMillis())}')")
+        statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${rowkeys.count()}','${rowkeys.count()/300}','${dateFormat.format(System.currentTimeMillis())}')")
         EsSpark.saveToEs(rowkeys, s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase", Map("es.mapping.id" -> "rowkey"))
 
         val tableName = "syslog"
