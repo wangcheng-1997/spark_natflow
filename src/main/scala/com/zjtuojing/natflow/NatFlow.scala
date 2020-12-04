@@ -48,7 +48,7 @@ object NatFlow {
     val Array(batchDuration) = args
     val sparkConf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-//      .setMaster("local[*]")
+      //      .setMaster("local[*]")
       .set("spark.streaming.kafka.maxRatePerPartition", properties.getProperty("kafka.maxRatePerPartition"))
       .set("es.port", properties.getProperty("es.port"))
       .set("es.nodes", properties.getProperty("es.nodes"))
@@ -105,6 +105,7 @@ object NatFlow {
     val kafkaParams = params + ("group.id" -> groupId)
     val stream = createDirectStream(ssc, kafkaParams, topic, tableName, groupId, connection1)
     val dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+    val datetime = dateFormat.format(System.currentTimeMillis())
 
     //TODO 处理数据
     stream.foreachRDD(rdd => {
@@ -129,7 +130,8 @@ object NatFlow {
           .map(per => {
             val strings1: Array[String] = per(0).split("\\s+")
             val strings2: Array[String] = per(1).split(" snat to ")
-            val date: Long = dateFormat.parse(strings1(0).replaceAll("T", " ").substring(0, 15) + "0:00")
+            val str = strings1(0).replaceAll("T", " ")
+            val date: Long = dateFormat.parse(str.substring(0, 15) + str.substring(15, 16).toInt / 5 * 5 + ":00")
               .getTime / 1000
             val hostIP = strings1(1)
             val corresponds = strings1(6).split("[->()]")
@@ -180,11 +182,11 @@ object NatFlow {
 
         while (last_value.next()) longs += last_value.getLong(1)
 
-//        if (longs.length == 0 || longs(0) * 1.5 >= nat_count) {
-          statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${dateFormat.format(System.currentTimeMillis())}')")
-//        }
+        //        if (longs.length == 0 || longs(0) * 1.5 >= nat_count) {
+        statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${datetime.substring(0,15)+datetime.substring(15,16).toInt/5*5+":00"}')")
+        //        }
 
-          val baseRDD = base.filter(_.username != "UnKnown")
+        val baseRDD = base.filter(_.username != "UnKnown")
           .filter(_.operator != "UnKnown")
           .filter(_.operator != "None")
           .persist(StorageLevel.MEMORY_AND_DISK_SER)
@@ -219,8 +221,8 @@ object NatFlow {
         EsSpark.saveToEs(operator, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(city, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
 
-//        val logger: Logger = LoggerFactory.getLogger(this.getClass)
-//        logger.info(s"${province.count()+operator.count()+city.count()}")
+        //        val logger: Logger = LoggerFactory.getLogger(this.getClass)
+        //        logger.info(s"${province.count()+operator.count()+city.count()}")
 
         val value: RDD[NATBean] = ssc.sparkContext.parallelize(baseRDD.collect())
 
@@ -237,7 +239,7 @@ object NatFlow {
           )
         })
 
-        statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${rowkeys.count()}','${rowkeys.count()/300}','${dateFormat.format(System.currentTimeMillis())}')")
+        statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${rowkeys.count()}','${rowkeys.count() / 300}','${datetime.substring(0,15)+datetime.substring(15,16).toInt/5*5+":00"}')")
         EsSpark.saveToEs(rowkeys, s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase", Map("es.mapping.id" -> "rowkey"))
 
         val tableName = "syslog"
@@ -296,38 +298,38 @@ object NatFlow {
     }
 
     val stream =
-//      if (fromOffsets.size == 0) { // 假设程序第一次启动
-        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topics)
-//      } else {
-//        var checkedOffset = Map[TopicAndPartition, Long]()
-//        val kafkaCluster = new KafkaCluster(kafkaParams)
-//        val earliestLeaderOffsets: Either[Err, Map[TopicAndPartition, KafkaCluster.LeaderOffset]] = kafkaCluster.getEarliestLeaderOffsets(fromOffsets.keySet)
-//
-//        val latestLeaderOffsets = kafkaCluster.getLatestLeaderOffsets(fromOffsets.keySet)
-//
-//        if (earliestLeaderOffsets.isRight) {
-//          val topicAndPartitionToOffset = earliestLeaderOffsets.right.get
-//          val topicAndPartitionLatestLeaderOffset = latestLeaderOffsets.right.get
-//          //           开始对比
-//          checkedOffset = fromOffsets.map(owner => {
-//            val clusterEarliestOffset = topicAndPartitionToOffset.get(owner._1).get.offset
-//            val clusterLateastOffset = topicAndPartitionLatestLeaderOffset.get(owner._1).get.offset
-//
-//            if (owner._2 >= clusterEarliestOffset) {
-//              if (owner._2 <= clusterLateastOffset) {
-//                owner
-//              } else {
-//                (owner._1, clusterLateastOffset)
-//              }
-//            } else {
-//              (owner._1, clusterLateastOffset)
-//            }
-//          })
-//        }
-//        // 程序非第一次启动
-//        val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
-//        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
-//      }
+    //      if (fromOffsets.size == 0) { // 假设程序第一次启动
+      KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topics)
+    //      } else {
+    //        var checkedOffset = Map[TopicAndPartition, Long]()
+    //        val kafkaCluster = new KafkaCluster(kafkaParams)
+    //        val earliestLeaderOffsets: Either[Err, Map[TopicAndPartition, KafkaCluster.LeaderOffset]] = kafkaCluster.getEarliestLeaderOffsets(fromOffsets.keySet)
+    //
+    //        val latestLeaderOffsets = kafkaCluster.getLatestLeaderOffsets(fromOffsets.keySet)
+    //
+    //        if (earliestLeaderOffsets.isRight) {
+    //          val topicAndPartitionToOffset = earliestLeaderOffsets.right.get
+    //          val topicAndPartitionLatestLeaderOffset = latestLeaderOffsets.right.get
+    //          //           开始对比
+    //          checkedOffset = fromOffsets.map(owner => {
+    //            val clusterEarliestOffset = topicAndPartitionToOffset.get(owner._1).get.offset
+    //            val clusterLateastOffset = topicAndPartitionLatestLeaderOffset.get(owner._1).get.offset
+    //
+    //            if (owner._2 >= clusterEarliestOffset) {
+    //              if (owner._2 <= clusterLateastOffset) {
+    //                owner
+    //              } else {
+    //                (owner._1, clusterLateastOffset)
+    //              }
+    //            } else {
+    //              (owner._1, clusterLateastOffset)
+    //            }
+    //          })
+    //        }
+    //        // 程序非第一次启动
+    //        val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
+    //        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
+    //      }
     stream
   }
 }
