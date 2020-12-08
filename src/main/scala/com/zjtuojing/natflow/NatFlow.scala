@@ -106,7 +106,7 @@ object NatFlow {
       val longs1 = new collection.mutable.ListBuffer[Long]
       while (last_value1.next()) longs1 += last_value1.getLong(1)
       statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('${longs1(0)}','${longs1(0) / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
-      val last_value2: ResultSet = statement2.executeQuery("select count_min from nat_hbase_count order by seq desc limit 1")
+      val last_value2: ResultSet = statement2.executeQuery("select count_5min from nat_hbase_count order by seq desc limit 1")
       val longs2 = new collection.mutable.ListBuffer[Long]
       while (last_value2.next()) longs2 += last_value2.getLong(1)
       statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${longs2(0)}','${longs2(0) / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
