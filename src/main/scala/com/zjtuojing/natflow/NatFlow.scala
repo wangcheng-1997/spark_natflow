@@ -51,10 +51,14 @@ object NatFlow {
       .setAppName(this.getClass.getSimpleName)
       //      .setMaster("local[*]")
       .set("spark.streaming.kafka.maxRatePerPartition", properties.getProperty("kafka.maxRatePerPartition"))
+      .set("spark.streaming.backpressure.enabled", "true")
       .set("es.port", properties.getProperty("es.port"))
       .set("es.nodes", properties.getProperty("es.nodes"))
       .set("es.nodes.wan.only", properties.getProperty("es.nodes.wan.only"))
       .set("es.index.auto.create", properties.getProperty("es.index.auto.create"))
+      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+
+    sparkConf.registerKryoClasses(Array(classOf[NATBean]))
 
     val sc = SparkContext.getOrCreate(sparkConf)
     sc.hadoopConfiguration.set("fs.defaultFS", properties.getProperty("fs.defaultFS"))
