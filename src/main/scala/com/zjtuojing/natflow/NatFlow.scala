@@ -249,7 +249,7 @@ object NatFlow {
         //        val logger: Logger = LoggerFactory.getLogger(this.getClass)
         //        logger.info(s"${province.count()+operator.count()+city.count()}")
 
-        val value: RDD[NATBean] = ssc.sparkContext.parallelize(baseRDD.collect())
+        val value: RDD[NATBean] = ssc.sparkContext.parallelize(baseRDD.collect()).persist(StorageLevel.MEMORY_AND_DISK_SER)
 
         //ES实现hbase二级索引
         val rowkeys: RDD[Map[String, Any]] = value.map(per => {
@@ -263,6 +263,8 @@ object NatFlow {
             "rowkey" -> per.rowkey
           )
         })
+
+//        baseRDD.map(_.username).saveAsTextFile("")
 
         statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${rowkeys.count()}','${rowkeys.count() / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
         EsSpark.saveToEs(rowkeys, s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase", Map("es.mapping.id" -> "rowkey"))
