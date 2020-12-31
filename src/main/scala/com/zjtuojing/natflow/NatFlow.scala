@@ -264,7 +264,7 @@ object NatFlow {
           )
         })
 
-//        baseRDD.map(_.username).saveAsTextFile("")
+        baseRDD.map(_.username).saveAsTextFile(s"hdfs://nns/nat_user/${now.substring(0,8)}")
 
         statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${rowkeys.count()}','${rowkeys.count() / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
         EsSpark.saveToEs(rowkeys, s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase", Map("es.mapping.id" -> "rowkey"))
@@ -323,7 +323,6 @@ object NatFlow {
     while (rs.next()) {
       fromOffsets ++= Map(TopicAndPartition(rs.getString("topic"), rs.getInt("partitionNum")) -> rs.getLong("offsets"))
     }
-    val logger = LoggerFactory.getLogger(this.getClass)
     val stream =
 //      if (fromOffsets.size == 0) { // 假设程序第一次启动
         KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topics)
@@ -355,7 +354,6 @@ object NatFlow {
 //        }
 //        // 程序非第一次启动
 //        val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
-//        logger.warn(s"我是第一次启动哦,$topic")
 //        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
 //      }
     stream
