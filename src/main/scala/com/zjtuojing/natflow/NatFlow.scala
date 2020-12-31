@@ -191,6 +191,9 @@ object NatFlow {
         EsSpark.saveToEs(operator, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(city, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
 
+        //用户记录写入hdfs
+        baseRDD.map(_.username).coalesce(1).saveAsTextFile(s"hdfs://nns/nat_user/${now.substring(0,8)}")
+
         val nat_count = province.map(per => (1, per.get("count").get.asInstanceOf[Int]))
           .reduceByKey(_ + _)
           .map(_._2)
