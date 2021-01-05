@@ -209,9 +209,9 @@ object NatFlow {
 
         while (last_value.next()) longs += last_value.getLong(1)
 
-        //        if (longs.length == 0 || longs(0) * 1.5 >= nat_count) {
-        statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
-        //        }
+        if (longs.length == 0 || longs(0) * 1.5 >= nat_count) {
+          statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
+        }
 
         val baseRDD = base.filter(_.username != "UnKnown")
           .persist(StorageLevel.MEMORY_AND_DISK_SER)
@@ -246,9 +246,6 @@ object NatFlow {
         EsSpark.saveToEs(operator, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(city, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
 
-        //        val logger: Logger = LoggerFactory.getLogger(this.getClass)
-        //        logger.info(s"${province.count()+operator.count()+city.count()}")
-
         val value: RDD[NATBean] = ssc.sparkContext.parallelize(baseRDD.collect()).persist(StorageLevel.MEMORY_AND_DISK_SER)
 
         //ES实现hbase二级索引
@@ -264,7 +261,8 @@ object NatFlow {
           )
         })
 
-        baseRDD.map(_.username).saveAsTextFile(s"hdfs://nns/nat_user/${now.substring(0,8)}")
+        baseRDD.map(_.username).coalesce(1)
+          .saveAsTextFile(s"hdfs://nns/nat_user/${now.substring(0, 8)}/${now.substring(8, 10)}/${now.substring(10)}")
 
         statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${rowkeys.count()}','${rowkeys.count() / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
         EsSpark.saveToEs(rowkeys, s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase", Map("es.mapping.id" -> "rowkey"))
@@ -348,7 +346,7 @@ object NatFlow {
 //                (owner._1, clusterLateastOffset)
 //              }
 //            } else {
-//              (owner._1, clusterLateastOffset)
+//              (owner._1, clusterEarliestOffset)
 //            }
 //          })
 //        }
