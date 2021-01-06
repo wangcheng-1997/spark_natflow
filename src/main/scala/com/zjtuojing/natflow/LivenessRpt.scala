@@ -52,7 +52,7 @@ object LivenessRpt {
 
     import spark.implicits._
 
-    value.toDF("username", "sum", "accesstime").saveToEs(s"/nat_liveness_$date/nat")
+    value.toDF("username", "sum", "accesstime").saveToEs(s"/bigdata_nat_liveness/nat")
 
 
 
