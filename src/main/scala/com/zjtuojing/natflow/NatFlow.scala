@@ -1,6 +1,6 @@
 package com.zjtuojing.natflow
 
-import java.sql.{Connection, DriverManager, ResultSet, Statement}
+import java.sql.{Connection, DriverManager, Statement}
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -23,10 +23,9 @@ import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaCluster, KafkaUti
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.elasticsearch.spark.rdd.EsSpark
-import org.slf4j.LoggerFactory
 
 /**
- * ClassName Flowmsg2HDFS
+ * ClassName NATFlow
  * Date 2020/8/12 9:16
  */
 object NatFlow {
@@ -69,9 +68,8 @@ object NatFlow {
     sc.hadoopConfiguration.set("dfs.client.failover.proxy.provider.nns", properties.getProperty("dfs.client.failover.proxy.provider.nns"))
     val ssc = new StreamingContext(sc, Seconds(batchDuration.toInt))
 
-    //    // 加载配置信息
-    //    Class.forName("com.mysql.jdbc.Driver")
-    //    // 指定数据库连接url，userName，password
+    // 加载配置信息
+    // 指定数据库连接url，userName，password
     val url1 = properties.getProperty("mysql.url")
     val url2 = "jdbc:mysql://30.250.11.142:3306/broadband?characterEncoding=utf-8&useSSL=false"
     val url3 = "jdbc:mysql://30.250.60.35:3306/nat_log?characterEncoding=utf-8&useSSL=false"
@@ -95,27 +93,6 @@ object NatFlow {
       "metadata.broker.list" -> properties.getProperty("metadata.broker.list"),
       "auto.offset.reset" -> properties.getProperty("auto.offset.reset")
     )
-
-    val statement2: Statement = natlog_connection.createStatement()
-    val dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-    val datetime = dateFormat.format(System.currentTimeMillis())
-    val before_value: ResultSet = statement2.executeQuery(s"select * from nat_count where update_time='${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}'")
-    var hasRows = false
-    while (before_value.next) {
-      hasRows = true
-    }
-
-    if (!hasRows) {
-      val last_value1: ResultSet = statement2.executeQuery("select count_min from nat_count order by seq desc limit 1")
-      val longs1 = new collection.mutable.ListBuffer[Long]
-      while (last_value1.next()) longs1 += last_value1.getLong(1)
-      statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('${longs1(0)}','${longs1(0) / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
-      val last_value2: ResultSet = statement2.executeQuery("select count_5min from nat_hbase_count order by seq desc limit 1")
-      val longs2 = new collection.mutable.ListBuffer[Long]
-      while (last_value2.next()) longs2 += last_value2.getLong(1)
-      statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${longs2(0)}','${longs2(0) / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
-    }
-
 
     //TODO  NAT日志解析
     NATAnalyze(kafkaParams, "syslog", ssc, "syslog", "nat_offset", offset_connection, username_connection, natlog_connection)
@@ -149,6 +126,11 @@ object NatFlow {
           usernames ++= Map(username.getString("framedip") -> username.getString("loginname"))
         }
         val users: Broadcast[Map[String, String]] = ssc.sparkContext.broadcast(usernames)
+
+        rdd.persist(StorageLevel.MEMORY_AND_DISK_SER)
+
+        rdd.saveAsTextFile(s"hdfs://nns/nat_log/${now.substring(0, 8)}/${now.substring(8, 10)}/${now.substring(10)}")
+
         val base = rdd.map(per => {
           val strings: Array[String] = per._2.split(",")
           strings
@@ -203,15 +185,7 @@ object NatFlow {
 
         val statement2: Statement = connection3.createStatement()
 
-        val last_value: ResultSet = statement2.executeQuery("select count_min from nat_count order by seq desc limit 1")
-
-        val longs = new collection.mutable.ListBuffer[Long]
-
-        while (last_value.next()) longs += last_value.getLong(1)
-
-        if (longs.length == 0 || longs(0) * 1.5 >= nat_count) {
-          statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
-        }
+        statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
 
         val baseRDD = base.filter(_.username != "UnKnown")
           .persist(StorageLevel.MEMORY_AND_DISK_SER)
@@ -322,38 +296,38 @@ object NatFlow {
       fromOffsets ++= Map(TopicAndPartition(rs.getString("topic"), rs.getInt("partitionNum")) -> rs.getLong("offsets"))
     }
     val stream =
-//      if (fromOffsets.size == 0) { // 假设程序第一次启动
+      if (fromOffsets.isEmpty) { // 假设程序第一次启动
         KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topics)
-//      } else {
-//        var checkedOffset = Map[TopicAndPartition, Long]()
-//        val kafkaCluster = new KafkaCluster(kafkaParams)
-//        val earliestLeaderOffsets: Either[Err, Map[TopicAndPartition, KafkaCluster.LeaderOffset]] = kafkaCluster.getEarliestLeaderOffsets(fromOffsets.keySet)
-//
-//        val latestLeaderOffsets = kafkaCluster.getLatestLeaderOffsets(fromOffsets.keySet)
-//
-//        if (earliestLeaderOffsets.isRight) {
-//          val topicAndPartitionToOffset = earliestLeaderOffsets.right.get
-//          val topicAndPartitionLatestLeaderOffset = latestLeaderOffsets.right.get
-//          //           开始对比
-//          checkedOffset = fromOffsets.map(owner => {
-//            val clusterEarliestOffset = topicAndPartitionToOffset.get(owner._1).get.offset
-//            val clusterLateastOffset = topicAndPartitionLatestLeaderOffset.get(owner._1).get.offset
-//
-//            if (owner._2 >= clusterEarliestOffset) {
-//              if (owner._2 <= clusterLateastOffset) {
-//                owner
-//              } else {
-//                (owner._1, clusterLateastOffset)
-//              }
-//            } else {
-//              (owner._1, clusterEarliestOffset)
-//            }
-//          })
-//        }
-//        // 程序非第一次启动
-//        val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
-//        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
-//      }
+      } else {
+        var checkedOffset = Map[TopicAndPartition, Long]()
+        val kafkaCluster = new KafkaCluster(kafkaParams)
+        val earliestLeaderOffsets: Either[Err, Map[TopicAndPartition, KafkaCluster.LeaderOffset]] = kafkaCluster.getEarliestLeaderOffsets(fromOffsets.keySet)
+
+        val latestLeaderOffsets = kafkaCluster.getLatestLeaderOffsets(fromOffsets.keySet)
+
+        if (earliestLeaderOffsets.isRight) {
+          val topicAndPartitionToOffset = earliestLeaderOffsets.right.get
+          val topicAndPartitionLatestLeaderOffset = latestLeaderOffsets.right.get
+          //           开始对比
+          checkedOffset = fromOffsets.map(owner => {
+            val clusterEarliestOffset = topicAndPartitionToOffset(owner._1).offset
+            val clusterLateastOffset = topicAndPartitionLatestLeaderOffset(owner._1).offset
+
+            if (owner._2 >= clusterEarliestOffset) {
+              if (owner._2 <= clusterLateastOffset) {
+                owner
+              } else {
+                (owner._1, clusterLateastOffset)
+              }
+            } else {
+              (owner._1, clusterEarliestOffset)
+            }
+          })
+        }
+        // 程序非第一次启动
+        val messageHandler = (mm: MessageAndMetadata[String, String]) => (mm.key(), mm.message())
+        KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
+      }
     stream
   }
 

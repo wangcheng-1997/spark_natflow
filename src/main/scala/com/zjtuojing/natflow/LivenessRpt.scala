@@ -1,11 +1,10 @@
 package com.zjtuojing.natflow
 
 import java.text.SimpleDateFormat
-import java.util.Date
-import org.elasticsearch.spark.sql._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
+import org.elasticsearch.spark.sql._
 
 object LivenessRpt {
   def main(args: Array[String]): Unit = {
@@ -15,7 +14,7 @@ object LivenessRpt {
 
     val conf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-      .setMaster("local[*]")
+//      .setMaster("local[*]")
       .set("es.port", properties.getProperty("es.port"))
       .set("es.nodes", properties.getProperty("es.nodes"))
       .set("es.nodes.wan.only", properties.getProperty("es.nodes.wan.only"))
@@ -31,11 +30,12 @@ object LivenessRpt {
     //注册
     conf.registerKryoClasses(
       Array(
-        classOf[Array[String]], classOf[Map[String, Any]]
-      )
-    )
+        classOf[Array[String]],
+        classOf[Map[String, Any]]
+      )    )
     val spark = SparkSession.builder().config(conf).getOrCreate()
     val sc = spark.sparkContext
+
     //HADOOP HA
     sc.hadoopConfiguration.set("fs.defaultFS", properties.getProperty("fs.defaultFS"))
     sc.hadoopConfiguration.set("dfs.nameservices", properties.getProperty("dfs.nameservices"))
@@ -53,8 +53,6 @@ object LivenessRpt {
     import spark.implicits._
 
     value.toDF("username", "resolver", "accesstime").saveToEs(s"/bigdata_nat_liveness/liveness")
-
-
 
   }
 }

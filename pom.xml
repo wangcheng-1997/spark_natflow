@@ -195,6 +195,11 @@
             <artifactId>hadoop-client</artifactId>
             <version>2.6.0</version>
         </dependency>
+        <dependency>
+            <groupId>com.github.housepower</groupId>
+            <artifactId>clickhouse-native-jdbc</artifactId>
+            <version>2.5.4</version>
+        </dependency>
 
     </dependencies>
     <build>
