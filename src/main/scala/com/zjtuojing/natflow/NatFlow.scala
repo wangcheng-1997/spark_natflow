@@ -25,7 +25,7 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.elasticsearch.spark.rdd.EsSpark
 
 /**
- * ClassName NATFlow
+ * ClassName NatFlow
  * Date 2020/8/12 9:16
  */
 object NatFlow {
@@ -37,7 +37,7 @@ object NatFlow {
     if (args.length != 1) {
       System.err.println(
         """
-          |com.zjtuojing.flowmsg.Flowmsg2HDFS
+          |com.zjtuojing.natflow.Natflow
           |参数错误：
           |
           |batchDuration
@@ -75,9 +75,6 @@ object NatFlow {
     val url3 = "jdbc:mysql://30.250.60.35:3306/nat_log?characterEncoding=utf-8&useSSL=false"
     val userName1 = properties.getProperty("mysql.username")
     val password1 = properties.getProperty("mysql.password")
-    //    ConnectionPool.singleton(url1, userName1, password1)
-    //    ConnectionPool.add("offset",url1,userName1,password1)
-
 
     //注册Driver
     Class.forName("com.mysql.jdbc.Driver")
@@ -86,8 +83,6 @@ object NatFlow {
     val username_connection = DriverManager.getConnection(url2, userName1, password1)
     val natlog_connection = DriverManager.getConnection(url3, userName1, password1)
 
-    //    DBs.setupAll()
-
     //TODO 设置kafka相关参数
     val kafkaParams = Map[String, String](
       "metadata.broker.list" -> properties.getProperty("metadata.broker.list"),
@@ -95,15 +90,14 @@ object NatFlow {
     )
 
     //TODO  NAT日志解析
-    NATAnalyze(kafkaParams, "syslog", ssc, "syslog", "nat_offset", offset_connection, username_connection, natlog_connection)
+    natAnalyze(kafkaParams, "syslog", ssc, "syslog", "nat_offset", offset_connection, username_connection, natlog_connection)
 
     ssc.start()
     ssc.awaitTermination()
 
-
   }
 
-  def NATAnalyze(params: Map[String, String], groupId: String, ssc: StreamingContext, topic: String, tableName: String, connection1: Connection, connection2: Connection, connection3: Connection): Unit = {
+  def natAnalyze(params: Map[String, String], groupId: String, ssc: StreamingContext, topic: String, tableName: String, connection1: Connection, connection2: Connection, connection3: Connection): Unit = {
     //TODO 设置kafka相关参数
     val kafkaParams = params + ("group.id" -> groupId)
     val stream = createDirectStream(ssc, kafkaParams, topic, tableName, groupId, connection1)
@@ -216,9 +210,15 @@ object NatFlow {
           .map(per => ((per.accesstime, per.city), 1))
           .reduceByKey(_ + _).map(per => Map("types" -> "city", "accesstime" -> per._1._1, "data" -> per._1._2, "count" -> per._2))
 
+        //TODO 5 设备计数维度聚合
+        val hostIp = baseRDD.map(per => {
+          ((per.accesstime, per.hostIP), 1)
+        }).reduceByKey(_ + _).map(per => Map("types" -> "hostIp", "accesstime" -> per._1._1, "data" -> per._1._2, "count" -> per._2))
+
         EsSpark.saveToEs(province, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(operator, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(city, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
+        EsSpark.saveToEs(hostIp, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
 
         val value: RDD[NATBean] = ssc.sparkContext.parallelize(baseRDD.collect()).persist(StorageLevel.MEMORY_AND_DISK_SER)
 
@@ -254,6 +254,7 @@ object NatFlow {
           val rowkey = Bytes.toBytes(per.rowkey)
 
           val put = new Put(rowkey)
+
           put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(dateFormat.format(per.accesstime * 1000)))
           put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("hostIP"), Bytes.toBytes(per.hostIP))
           put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(per.sourceIp))
@@ -279,6 +280,7 @@ object NatFlow {
     val statement = connection.createStatement
 
     for (o <- offsetRanges) {
+
       statement.executeUpdate(s"replace into $tableName(groupId, topic, partitionNum, offsets) VALUES('$groupId','${o.topic}','${o.partition}','${o.untilOffset}')")
     }
 

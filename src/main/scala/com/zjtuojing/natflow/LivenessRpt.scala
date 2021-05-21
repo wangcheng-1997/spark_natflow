@@ -52,7 +52,8 @@ object LivenessRpt {
 
     import spark.implicits._
 
-    value.toDF("username", "resolver", "accesstime").saveToEs(s"/bigdata_nat_liveness/liveness")
+    value.toDF("username", "resolver", "accesstime")
+      .saveToEs(s"/bigdata_nat_liveness/liveness")
 
   }
 }
