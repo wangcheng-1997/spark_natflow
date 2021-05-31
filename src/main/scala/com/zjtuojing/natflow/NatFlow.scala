@@ -4,6 +4,8 @@ import java.sql.{Connection, DriverManager, Statement}
 import java.text.SimpleDateFormat
 import java.util.Date
 
+import com.alibaba.fastjson.JSON
+import com.tuojing.core.common.aes.AESUtils
 import com.zjtuojing.natflow.BeanClass.NATBean
 import kafka.common.TopicAndPartition
 import kafka.message.MessageAndMetadata
@@ -16,6 +18,7 @@ import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.mapred.JobConf
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.dstream.InputDStream
 import org.apache.spark.streaming.kafka.KafkaCluster.Err
@@ -23,6 +26,8 @@ import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaCluster, KafkaUti
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.elasticsearch.spark.rdd.EsSpark
+import org.slf4j.LoggerFactory
+import redis.clients.jedis.Jedis
 
 /**
  * ClassName NatFlow
@@ -30,8 +35,10 @@ import org.elasticsearch.spark.rdd.EsSpark
  */
 object NatFlow {
 
+  val logger = LoggerFactory.getLogger(this.getClass)
+  val properties = MyUtils.loadConf()
+
   def main(args: Array[String]): Unit = {
-    val properties = MyUtils.loadConf()
 
     //TODO 参数校验
     if (args.length != 1) {
@@ -59,7 +66,9 @@ object NatFlow {
 
     sparkConf.registerKryoClasses(Array(classOf[NATBean]))
 
-    val sc = SparkContext.getOrCreate(sparkConf)
+    val spark = SparkSession.builder().config(sparkConf).getOrCreate()
+
+    val sc = spark.sparkContext
     sc.hadoopConfiguration.set("fs.defaultFS", properties.getProperty("fs.defaultFS"))
     sc.hadoopConfiguration.set("dfs.nameservices", properties.getProperty("dfs.nameservices"))
     sc.hadoopConfiguration.set("dfs.ha.namenodes.nns", properties.getProperty("dfs.ha.namenodes.nns"))
@@ -70,9 +79,8 @@ object NatFlow {
 
     // 加载配置信息
     // 指定数据库连接url，userName，password
-    val url1 = properties.getProperty("mysql.url")
-    val url2 = "jdbc:mysql://30.250.11.142:3306/broadband?characterEncoding=utf-8&useSSL=false"
-    val url3 = "jdbc:mysql://30.250.60.35:3306/nat_log?characterEncoding=utf-8&useSSL=false"
+    val url1 = properties.getProperty("mysql.url1")
+    val url2 = properties.getProperty("mysql.url2")
     val userName1 = properties.getProperty("mysql.username")
     val password1 = properties.getProperty("mysql.password")
 
@@ -80,8 +88,7 @@ object NatFlow {
     Class.forName("com.mysql.jdbc.Driver")
     //得到连接
     val offset_connection: Connection = DriverManager.getConnection(url1, userName1, password1)
-    val username_connection = DriverManager.getConnection(url2, userName1, password1)
-    val natlog_connection = DriverManager.getConnection(url3, userName1, password1)
+    val natlog_connection = DriverManager.getConnection(url2, userName1, password1)
 
     //TODO 设置kafka相关参数
     val kafkaParams = Map[String, String](
@@ -90,14 +97,14 @@ object NatFlow {
     )
 
     //TODO  NAT日志解析
-    natAnalyze(kafkaParams, "syslog", ssc, "syslog", "nat_offset", offset_connection, username_connection, natlog_connection)
+    natAnalyze(kafkaParams, "syslog", ssc, "syslog", "nat_offset", offset_connection, natlog_connection, sc)
 
     ssc.start()
     ssc.awaitTermination()
 
   }
 
-  def natAnalyze(params: Map[String, String], groupId: String, ssc: StreamingContext, topic: String, tableName: String, connection1: Connection, connection2: Connection, connection3: Connection): Unit = {
+  def natAnalyze(params: Map[String, String], groupId: String, ssc: StreamingContext, topic: String, tableName: String, connection1: Connection, connection2: Connection, sc: SparkContext): Unit = {
     //TODO 设置kafka相关参数
     val kafkaParams = params + ("group.id" -> groupId)
     val stream = createDirectStream(ssc, kafkaParams, topic, tableName, groupId, connection1)
@@ -112,13 +119,10 @@ object NatFlow {
         //获取rdd在kafka中的偏移量信息
         val offsetRanges = rdd.asInstanceOf[HasOffsetRanges].offsetRanges
 
-        val statement1 = connection2.createStatement
+        val jedisPool = JedisPool.getJedisPool()
+        val jedis = JedisPool.getJedisClient(jedisPool)
 
-        var usernames = Map[String, String]()
-        val username = statement1.executeQuery(s"""select framedip,loginname from aaa_bb_online""")
-        while (username.next) {
-          usernames ++= Map(username.getString("framedip") -> username.getString("loginname"))
-        }
+        val usernames = getUserName(jedis)
         val users: Broadcast[Map[String, String]] = ssc.sparkContext.broadcast(usernames)
 
         rdd.persist(StorageLevel.MEMORY_AND_DISK_SER)
@@ -177,7 +181,7 @@ object NatFlow {
 
         val nat_count = base.count()
 
-        val statement2: Statement = connection3.createStatement()
+        val statement2: Statement = connection2.createStatement()
 
         statement2.executeUpdate(s"insert into nat_count (count_min,count_sec,update_time) values ('$nat_count','${nat_count / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
 
@@ -197,12 +201,14 @@ object NatFlow {
 
 
         //TODO 3 目标IP维度聚合
-        baseRDD.map(per => {
+        val targetIp = baseRDD.map(per => {
           ((per.accesstime, per.targetIp), 1)
         }).reduceByKey(_ + _)
-          .filter(_._2 > 10).map(per => (per._1._1, per._1._2, per._2))
-          .coalesce(1)
-          .saveAsTextFile(s"hdfs://nns/NATIp/${now.substring(0, 8)}/${now.substring(8)}")
+          .sortBy(_._2)
+          .take(70000)
+          .map(per => Map("types" -> "targetIp", "accesstime" -> per._1._1, "data" -> per._1._2, "count" -> per._2))
+        //          .coalesce(1)
+        //          .saveAsTextFile(s"hdfs://nns/NATIp/${now.substring(0, 8)}/${now.substring(8)}")
 
         //TODO 4 省会维度聚合
         val city = baseRDD
@@ -217,6 +223,7 @@ object NatFlow {
 
         EsSpark.saveToEs(province, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(operator, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
+        EsSpark.saveToEs(sc.parallelize(targetIp), s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(city, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
         EsSpark.saveToEs(hostIp, s"bigdata_nat_flow_${now.substring(0, 8)}/nat")
 
@@ -227,10 +234,7 @@ object NatFlow {
           Map("accesstime" -> per.accesstime,
             "sourceIp" -> per.sourceIp,
             "sourcePort" -> per.sourcePort,
-            "targetIp" -> per.targetIp,
-            "targetPort" -> per.targetPort,
-            "convertedIp" -> per.convertedIp,
-            "convertedPort" -> per.convertedPort,
+            "partKey" -> (per.targetIp+per.targetPort+per.convertedIp+per.convertedPort),
             "rowkey" -> per.rowkey
           )
         })
@@ -239,12 +243,20 @@ object NatFlow {
           .saveAsTextFile(s"hdfs://nns/nat_user/${now.substring(0, 8)}/${now.substring(8, 10)}/${now.substring(10)}")
 
         statement2.executeUpdate(s"insert into nat_hbase_count (count_5min,count_sec,update_time) values ('${rowkeys.count()}','${rowkeys.count() / 300}','${datetime.substring(0, 15) + datetime.substring(15, 16).toInt / 5 * 5 + ":00"}')")
-        EsSpark.saveToEs(rowkeys, s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase", Map("es.mapping.id" -> "rowkey"))
+
+        try {
+          EsSpark.saveToEs(rowkeys, s"bigdata_nat_hbase_${now.substring(0, 8)}/hbase", Map("es.mapping.id" -> "rowkey"))
+        } catch {
+          case e: Exception =>
+            e.printStackTrace()
+            logger.error("写入异常")
+        }
+
 
         val tableName = "syslog"
         val conf = HBaseConfiguration.create()
         val jobConf = new JobConf(conf)
-        jobConf.set("hbase.zookeeper.quorum", "30.250.60.2,30.250.60.3,30.250.60.5,30.250.60.6,30.250.60.7")
+        jobConf.set("hbase.zookeeper.quorum",properties.getProperty("hbase.zookeeper.quorum"))
         jobConf.set("zookeeper.znode.parent", "/hbase")
         jobConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
         jobConf.setOutputFormat(classOf[TableOutputFormat])
@@ -272,6 +284,8 @@ object NatFlow {
         baseRDD.unpersist()
 
         offset2Mysql(offsetRanges, groupId, "nat_offset", connection1)
+        jedis.close()
+        jedisPool.destroy()
       }
     })
   }
@@ -331,6 +345,24 @@ object NatFlow {
         KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder, (String, String)](ssc, kafkaParams, checkedOffset, messageHandler)
       }
     stream
+  }
+
+  def getUserName(jedis: Jedis): Map[String, String] = {
+    var maps = Map[String, String]()
+    try {
+      maps = jedis.hgetAll("ONLINEUSERS:USER_OBJECT")
+        .values().toArray
+        .map(json => {
+          val jobj = JSON.parseObject(AESUtils.decryptData("tj!@#123#@!tj&!$",json.toString))
+          (jobj.getString("ip"), jobj.getString("user"))
+        }).toMap
+    } catch {
+      case e: Exception =>
+        maps = maps
+        logger.error("getUserName", e)
+      //        e.printStackTrace()
+    }
+    maps
   }
 
 }

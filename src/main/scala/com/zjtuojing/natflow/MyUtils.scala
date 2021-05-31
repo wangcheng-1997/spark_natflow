@@ -158,7 +158,12 @@ object MyUtils {
   }
 
   def main(args: Array[String]): Unit = {
-    val str: String = MD5Encode("100.105.57.15959544220.249.46.438058.101.147.20462685").substring(8,24)
+    val jedisPool = JedisPool.getJedisPool()
+    val jedis = JedisPool.getJedisClient(jedisPool)
+    val users = NatFlow.getUserName(jedis)
+    val str = users.getOrElse("100.105.184.47", "unknown")
     println(str)
+    jedis.close()
+    jedisPool.destroy()
   }
 }

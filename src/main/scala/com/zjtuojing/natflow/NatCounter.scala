@@ -47,8 +47,8 @@ object NatCounter {
       .set("es.nodes", properties.getProperty("es.nodes"))
       .set("es.nodes.wan.only", properties.getProperty("es.nodes.wan.only"))
       .set("es.index.auto.create", properties.getProperty("es.index.auto.create"))
-      .set("es.index.read.missing.as.empty", "false")
-      .set("spark.es.input.use.sliced.partitions", properties.getProperty("spark.es.input.use.sliced.partitions"))
+      .set("es.index.read.missing.as.empty", "true")
+
     //采用kryo序列化库
     sparkConf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
     //注册
@@ -74,78 +74,9 @@ object NatCounter {
       case _ => println("NAT日志分析跳过执行...")
     }
 
-    val lower: Long = MyUtils.getTaskTime._3._2
-    val upper: Long = MyUtils.getTaskTime._3._1
-
-    Class.forName("com.mysql.jdbc.Driver")
-
-    // 指定数据库连接url，userName，password
-
-    val url = "jdbc:mysql://30.250.60.40:3306/nat_log?characterEncoding=utf-8&useSSL=false"
-
-    val userName = properties.getProperty("mysql.username")
-
-    val password = properties.getProperty("mysql.password")
-
-    ConnectionPool.singleton(url, userName, password)
-
-    DBs.setupAll()
-
-    val nat_count = DB.readOnly { implicit session =>
-      SQL(
-        s"""
-           |select
-           |count_min
-           |from
-           |nat_count
-           |where
-           |UNIX_TIMESTAMP(update_time)<$upper
-           |and UNIX_TIMESTAMP(update_time)>=$lower""".stripMargin)
-        .map(rs => {
-          val count_min = rs.long(1)
-          count_min
-        })
-        .list()
-        .apply()
-    }
-    val nat_hbase_count = DB.readOnly { implicit session =>
-      SQL(
-        s"""
-           |select
-           |count_5min
-           |from
-           |nat_hbase_count
-           |where
-           |UNIX_TIMESTAMP(update_time)<$upper
-           |and UNIX_TIMESTAMP(update_time)>=$lower""".stripMargin)
-        .map(rs => {
-          val count_min = rs.long(1)
-          count_min
-        })
-        .list()
-        .apply()
-    }
-    val sum1 = nat_count.sum
-    val sum2 = nat_hbase_count.sum
-    val date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(lower * 1000)
-
-    DB.localTx { implicit session =>
-      SQL("insert into nat_count_day (count_day,date) values (?,?)")
-        .bind(sum1, date)
-        .update()
-        .apply()
-      SQL("insert into nat_hbase_count_day (count_day,date) values (?,?)")
-        .bind(sum2, date)
-        .update()
-        .apply()
-    }
-
-    DBs.closeAll()
-
-
   }
 
-  private def getFlowCountDD(properties: Properties) = {
+  def getFlowCountDD(properties: Properties) = {
     val lower: Long = MyUtils.getTaskTime._3._2
     val upper: Long = MyUtils.getTaskTime._3._1
 
@@ -153,7 +84,7 @@ object NatCounter {
 
     // 指定数据库连接url，userName，password
 
-    val url = "jdbc:mysql://30.250.60.40:3306/nat_log?characterEncoding=utf-8&useSSL=false"
+    val url = properties.getProperty("mysql.url3")
 
     val userName = properties.getProperty("mysql.username")
 
