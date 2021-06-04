@@ -1,4 +1,4 @@
-package com.zjtuojing.natflow
+package com.zjtuojing.utils
 
 import java.io.FileInputStream
 import java.security.MessageDigest
@@ -158,12 +158,6 @@ object MyUtils {
   }
 
   def main(args: Array[String]): Unit = {
-    val jedisPool = JedisPool.getJedisPool()
-    val jedis = JedisPool.getJedisClient(jedisPool)
-    val users = NatFlow.getUserName(jedis)
-    val str = users.getOrElse("100.105.184.47", "unknown")
-    println(str)
-    jedis.close()
-    jedisPool.destroy()
+println("Msginsh".startsWith("Msg"))
   }
 }

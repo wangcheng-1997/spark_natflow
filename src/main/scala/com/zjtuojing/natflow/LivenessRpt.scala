@@ -2,6 +2,7 @@ package com.zjtuojing.natflow
 
 import java.text.SimpleDateFormat
 
+import com.zjtuojing.utils.MyUtils
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 import org.elasticsearch.spark.sql._

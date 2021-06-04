@@ -10,6 +10,10 @@
 
     <repositories>
         <repository>
+            <id>tuojing</id>
+            <url>http://maven.zjtuojing.com:38081/nexus/content/repositories/snapshots/</url>
+        </repository>
+        <repository>
             <id>cloudera</id>
             <url>https://repository.cloudera.com/artifactory/cloudera-repos/</url>
         </repository>
@@ -195,10 +199,18 @@
             <artifactId>hadoop-client</artifactId>
             <version>2.6.0</version>
         </dependency>
+
         <dependency>
             <groupId>com.github.housepower</groupId>
-            <artifactId>clickhouse-native-jdbc</artifactId>
+            <artifactId>clickhouse-native-jdbc-shaded</artifactId>
             <version>2.5.4</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.tuojing</groupId>
+            <artifactId>core-common</artifactId>
+            <type>jar</type>
+            <version>0.0.1-SNAPSHOT</version>
         </dependency>
 
     </dependencies>

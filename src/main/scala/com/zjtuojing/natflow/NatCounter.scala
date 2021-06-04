@@ -3,6 +3,7 @@ package com.zjtuojing.natflow
 import java.text.SimpleDateFormat
 import java.util.{Date, Properties}
 
+import com.zjtuojing.utils.MyUtils
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
