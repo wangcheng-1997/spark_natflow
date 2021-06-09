@@ -1,61 +1,37 @@
 package com.zjtuojing.utils
 
-import java.util
-
-import redis.clients.jedis.{Jedis, JedisPoolConfig, JedisSentinelPool}
+import redis.clients.jedis.{Jedis, JedisPool}
 
 object JedisPool {
 
   val properties = MyUtils.loadConf()
+  val password = properties.getProperty("redis.password")
 
-  val MASTER_NAME = "mymaster"
   val TIME_OUT = 30000
 
-  def getJedisPool(): JedisSentinelPool = {
+  def getJedisPool(): JedisPool = {
 
-    val jedisPoolConfig = new JedisPoolConfig()
-    jedisPoolConfig.setTestOnBorrow(true)
-    jedisPoolConfig.setTestOnReturn(true)
-    jedisPoolConfig.setTestWhileIdle(true)
-    jedisPoolConfig.setMaxTotal(-1)
+    val redisHost = properties.getProperty("redis.host")
+    val redisPort = properties.getProperty("redis.port")
 
-    val sentinelSet = new util.HashSet[String]()
-    val redisUrl = properties.getProperty("redis.url")
-    val urls: Array[String] = redisUrl.split(",")
-    for (i <- urls.indices) {
-      sentinelSet.add(urls(i))
-    }
-
-    val password = properties.getProperty("redis.password")
-
-    val pool = new JedisSentinelPool(MASTER_NAME, sentinelSet, jedisPoolConfig, TIME_OUT, password)
+    val pool = new JedisPool(redisHost,redisPort.toInt)
 
     pool
   }
 
-  def getJedisClient(pool: JedisSentinelPool): Jedis = {
+  def getJedisClient(pool: JedisPool): Jedis = {
     val jedis = pool.getResource
+    jedis.auth(password)
     jedis
   }
 
   def getJedisClient(): Jedis = {
-    val jedisPoolConfig = new JedisPoolConfig()
-    jedisPoolConfig.setTestOnBorrow(true)
-    jedisPoolConfig.setTestOnReturn(true)
-    jedisPoolConfig.setTestWhileIdle(true)
-    jedisPoolConfig.setMaxTotal(-1)
+    val redisHost = properties.getProperty("redis.host")
+    val redisPort = properties.getProperty("redis.port")
 
-    val sentinelSet = new util.HashSet[String]()
-    val redisUrl = properties.getProperty("redis.url")
-    val urls: Array[String] = redisUrl.split(",")
-    for (i <- urls.indices) {
-      sentinelSet.add(urls(i))
-    }
-
-    val password = properties.getProperty("redis.password")
-
-    val pool = new JedisSentinelPool(MASTER_NAME, sentinelSet, jedisPoolConfig, TIME_OUT, password)
+    val pool = new JedisPool(redisHost,redisPort.toInt)
     val jedis = pool.getResource
+    jedis.auth(password)
     jedis
   }
 
@@ -63,7 +39,8 @@ object JedisPool {
 
     val jedisPool = getJedisPool()
     val jedis = getJedisClient(jedisPool)
-    jedis.hgetAll("broadband:userinfo")
+    println(jedis.exists("nat:radius"))
+    jedis.hgetAll("nat:radius")
       .values().toArray
       .take(1).foreach(println(_))
 
@@ -73,3 +50,4 @@ object JedisPool {
 
 
 }
+

@@ -92,6 +92,10 @@
   </build>
   <repositories>
     <repository>
+      <id>tuojing</id>
+      <url>http://maven.zjtuojing.com:38081/nexus/content/repositories/snapshots/</url>
+    </repository>
+    <repository>
       <id>cloudera</id>
       <url>https://repository.cloudera.com/artifactory/cloudera-repos/</url>
     </repository>

@@ -3,16 +3,18 @@ package com.zjtuojing.utils
 import java.io.FileInputStream
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
-import java.util.{Date, Properties}
+import java.util.{Calendar, Date, Properties}
+
+import com.zjtuojing.natflow.NatFlow
 
 object MyUtils {
 
   /**
-    * xx.xx.xx.xx转换为Long类型
-    *
-    * @param ip
-    * @return
-    */
+   * xx.xx.xx.xx转换为Long类型
+   *
+   * @param ip
+   * @return
+   */
   def ipToLong(ip: String): Long = {
     val arr = ip.split("\\.")
     var ip2long = 0L
@@ -34,12 +36,12 @@ object MyUtils {
 
 
   /**
-    * get APP
-    *
-    * @param ip
-    * @param appBro
-    * @return
-    */
+   * get APP
+   *
+   * @param ip
+   * @param appBro
+   * @return
+   */
   def getAppName(ip: Long, appBro: Array[(Long, Long, String)]): String = {
     var appName = "其他"
     appBro.map(bro => {
@@ -61,16 +63,16 @@ object MyUtils {
       "15=0", "16=0", "17=0", "18=0", "19=0", "20=0", "21=0", "22=0",
       "23=0")
 
-    for(o <- 0 to array.length - 1){
+    for (o <- 0 to array.length - 1) {
       val files = array(o).split("=")
       val hour = files(0)
       var byte = files(1)
       dataList.foreach(tuple => {
-        if(hour == tuple._1){
+        if (hour == tuple._1) {
           byte = tuple._2
         }
       })
-      array(o) = hour+"="+byte
+      array(o) = hour + "=" + byte
     }
     array.toList.mkString(",")
   }
@@ -140,7 +142,7 @@ object MyUtils {
   def loadConf(): Properties = {
 
     val properties = new Properties
-    val ipstream = new FileInputStream("config.properties")
+    val ipstream = new FileInputStream("conf/config.properties")
     properties.load(ipstream)
     properties
   }
@@ -148,7 +150,7 @@ object MyUtils {
   def getMsgTime(msgTime: String) = {
     //    2020-08-17T09:14:58+08:00
     val str: String = msgTime.replaceAll("T|(\\+08:00)", " ")
-      .substring(0,16)
+      .substring(0, 16)
     val df = new SimpleDateFormat("yyyy-MM-dd HH:mm")
 
     val now_min = str.substring(14, 16).toInt
@@ -158,6 +160,17 @@ object MyUtils {
   }
 
   def main(args: Array[String]): Unit = {
-println("Msginsh".startsWith("Msg"))
+    val per = "Msg: Jun  7 09:07:06 1304447192000843(root) 46083623 Traffic@FLOW: NAT: 30.128.80.241:44652->223.111.219.48:1939(UDP), snat to 223.95.79.32:14872, vr trust-vr, user -@UNKNOWN, host -, rule 318\0x0a\0x00 09:10:26.995258 IP (tos 0x0, ttl 122, id 51271, offset 0, flags [none], proto UDP (17), length 221)"
+    val log = per.split(",")
+    val msg = log(0).split("\\s+")
+    val year = new SimpleDateFormat("yyyy").format(new Date())
+    val time = new Date(s"${msg(1)} ${msg(2)} ${msg(3)} $year").getTime / 1000
+    val ips = msg(8).split("[:\\->()]")
+    val convert = log(1).split(" ")(3).split("[ :]")
+    println(ips(0),ips(1),ips(3),ips(4),ips(5))
+    println(time)
+    println(convert(0),convert(1))
+
+
   }
 }

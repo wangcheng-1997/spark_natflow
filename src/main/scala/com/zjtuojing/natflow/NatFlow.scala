@@ -8,15 +8,15 @@ import com.alibaba.fastjson.JSON
 import com.tuojing.core.common.aes.AESUtils
 import com.zjtuojing.natflow.BeanClass.{NATBean, NATReportBean, SecondaryIndexBean}
 import com.zjtuojing.utils.{ClickUtils, JedisPool, MyUtils}
-
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.hbase.HBaseConfiguration
-import org.apache.hadoop.hbase.client.{Put, Result}
+import org.apache.hadoop.hbase.{HBaseConfiguration, KeyValue, TableName}
+import org.apache.hadoop.hbase.client.{ConnectionFactory, Put, Result}
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapred.TableOutputFormat
+import org.apache.hadoop.hbase.mapreduce.{HFileOutputFormat2, LoadIncrementalHFiles}
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.mapred.JobConf
-
+import org.apache.hadoop.mapreduce.Job
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext, Time}
@@ -53,14 +53,15 @@ object NatFlow {
 
     val sparkConf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-      //      .setMaster("local[*]")
+      .setMaster("local[*]")
       .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
 
     sparkConf.registerKryoClasses(
       Array(
         classOf[NATBean],
         classOf[NATReportBean],
-        classOf[SecondaryIndexBean]
+        classOf[SecondaryIndexBean],
+        classOf[ImmutableBytesWritable]
       )
     )
 
@@ -81,7 +82,7 @@ object NatFlow {
     val ssc = new StreamingContext(sc, Seconds(300))
     val stream = ssc.textFileStream("home/DontDelete")
     stream.foreachRDD((rdd, time) => {
-      logger.info("task start ..... batch time:{time}", rdd.count())
+      logger.info(s"task start ..... batch time:{$time}", rdd.count())
       //      获取当前时间
       call(sc, spark, time)
     })
@@ -97,8 +98,8 @@ object NatFlow {
     val time: Long = (batchTime.milliseconds - 300000) / 1000
 
     val path
-    = s"/nat_log/${new SimpleDateFormat("yyyyMMdd/HH/mm").format(time * 1000)}"
-    //    = "/nat_log/20210607/09/40/2021_06_07_093801-6e87.log"
+    //    = s"/nat_log/${new SimpleDateFormat("yyyyMMdd/HH/mm").format(time * 1000)}"
+    = "/nat_log/20210607/09/40/2021_06_07_093801-6e87.log"
 
     var natPath: String = ""
 
@@ -132,13 +133,13 @@ object NatFlow {
 
     val now = new SimpleDateFormat("yyyyMMddHHmm").format(time * 1000)
 
-    // 1 主机设备IP解析
-    val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
-      .coalesce(360)
-      .map(per => {
-        val hostIp = per.split(" ")(0)
-        ((time, hostIp.substring(0, hostIp.size - 5)), 1)
-      }).reduceByKey(_ + _).map(per => NATReportBean("hostIP", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+    //    // 1 主机设备IP解析
+    //    val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
+    //      .coalesce(360)
+    //      .map(per => {
+    //        val hostIp = per.split(" ")(0)
+    //        ((time, hostIp.substring(0, hostIp.size - 5)), 1)
+    //      }).reduceByKey(_ + _).map(per => NATReportBean("hostIP", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
 
     // 2 日志Msg解析
     val msgRDD = baseRDD.filter(_.startsWith("Msg"))
@@ -206,50 +207,51 @@ object NatFlow {
 
     userMapsBC.unpersist()
 
-    // 2.1 province维度聚合
-    val province = msgRDD.map(per => {
-      ((time, per.province), 1)
-    }).reduceByKey(_ + _)
-      .map(per => NATReportBean("province", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+    //    // 2.1 province维度聚合
+    //    val province = msgRDD.map(per => {
+    //      ((time, per.province), 1)
+    //    }).reduceByKey(_ + _)
+    //      .map(per => NATReportBean("province", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+    //
+    //    // 2.2 运营商维度聚合
+    //    val operator = msgRDD.map(per => {
+    //      ((time, per.operator), 1)
+    //    }).reduceByKey(_ + _).map(per => NATReportBean("operator", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+    //
+    //    // 2.3 目标IP维度聚合
+    //    val targetIp = msgRDD.map(per => ((time, per.targetIp), 1))
+    //      .reduceByKey(_ + _)
+    //      .sortBy(_._2)
+    //      .filter(_._2 >= 100)
+    //      .take(20000)
+    //      .map(per => NATReportBean("targetIp", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+    //
+    //    // 2.4 省会维度聚合
+    //    val city = msgRDD.map(per => ((time, per.city), 1))
+    //      .reduceByKey(_ + _)
+    //      .map(per => NATReportBean("city", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+    //
+    //    val provinceDF = spark.createDataFrame(province).coalesce(100)
+    //    val operatorDF = spark.createDataFrame(operator).coalesce(100)
+    //    val targetIpDF = spark.createDataFrame(targetIp).coalesce(100)
+    //    val cityDF = spark.createDataFrame(city).coalesce(100)
+    //    val hostIPDF = spark.createDataFrame(hostIpRDD).coalesce(100)
 
-    // 2.2 运营商维度聚合
-    val operator = msgRDD.map(per => {
-      ((time, per.operator), 1)
-    }).reduceByKey(_ + _).map(per => NATReportBean("operator", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
-
-    // 2.3 目标IP维度聚合
-    val targetIp = msgRDD.map(per => ((time, per.targetIp), 1))
-      .reduceByKey(_ + _)
-      .sortBy(_._2)
-      .filter(_._2 >= 100)
-      .take(20000)
-      .map(per => NATReportBean("targetIp", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
-
-    // 2.4 省会维度聚合
-    val city = msgRDD.map(per => ((time, per.city), 1))
-      .reduceByKey(_ + _)
-      .map(per => NATReportBean("city", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
-
-    val provinceDF = spark.createDataFrame(province).coalesce(100)
-    val operatorDF = spark.createDataFrame(operator).coalesce(100)
-    val targetIpDF = spark.createDataFrame(targetIp).coalesce(100)
-    val cityDF = spark.createDataFrame(city).coalesce(100)
-    val hostIPDF = spark.createDataFrame(hostIpRDD).coalesce(100)
-
-    val userAnalyzeRDD = msgRDD.filter(_.username != "UnKnown")
+    val userAnalyzeRDD = msgRDD
+      .filter(_.username != "UnKnown")
       .coalesce(360)
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
-    // TODO 用户名称活跃统计
-    msgRDD.map(per => (per.username, 1))
-      .reduceByKey(_ + _)
-      .coalesce(1)
-      .saveAsTextFile(s"hdfs://nns/nat_user/${now.substring(0, 8)}/${now.substring(8, 10)}/${now.substring(10)}")
-
-    val rowKeys = userAnalyzeRDD.map(per => {
-      SecondaryIndexBean(new Timestamp(per.accesstime * 1000), MyUtils.MD5Encode(per.targetIp + per.targetPort + per.convertedIp + per.convertedPort).substring(8, 24), per.rowkey)
-    })
-    val rowKeysDF = spark.createDataFrame(rowKeys).coalesce(100)
+    //    // TODO 用户名称活跃统计
+    //    msgRDD.map(per => (per.username, 1))
+    //      .reduceByKey(_ + _)
+    //      .coalesce(1)
+    //      .saveAsTextFile(s"hdfs://nns/nat_user/${now.substring(0, 8)}/${now.substring(8, 10)}/${now.substring(10)}")
+    //
+    //    val rowKeys = userAnalyzeRDD.map(per => {
+    //      SecondaryIndexBean(new Timestamp(per.accesstime * 1000), MyUtils.MD5Encode(per.targetIp + per.targetPort + per.convertedIp + per.convertedPort).substring(8, 24), per.rowkey)
+    //    })
+    //    val rowKeysDF = spark.createDataFrame(rowKeys).coalesce(100)
 
     val tableName = "syslog"
 
@@ -258,57 +260,91 @@ object NatFlow {
     hbaseConf.set("hbase.zookeeper.property.clientPort", "2181") //设置zookeeper连接端口，默认2181
     hbaseConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
 
+    val hbaseConn = ConnectionFactory.createConnection(hbaseConf)
+    val admin = hbaseConn.getAdmin
+
     // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
     val jobConf = new JobConf(hbaseConf)
     jobConf.setOutputFormat(classOf[TableOutputFormat])
 
-    userAnalyzeRDD.map(per => {
-      val rowkey = Bytes.toBytes(per.rowkey)
-      val put = new Put(rowkey)
+    val hbaseRDD = userAnalyzeRDD.map(per=>(per.rowkey,per)).reduceByKey((x,y) => x).map(_._2).sortBy(_.rowkey)
+      .map(per => {
 
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(per.accesstime * 1000)))
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(per.sourceIp))
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(per.sourcePort))
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(per.targetIp))
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(per.targetPort))
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(per.protocol))
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(per.convertedIp))
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(per.convertedPort))
-      put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(per.username))
-      (new ImmutableBytesWritable, put)
-    }).saveAsHadoopDataset(jobConf)
+        val rowkey = Bytes.toBytes(per.rowkey)
 
-    try {
-      //  TODO  维度聚合报表数据写入clickhouse
-      ClickUtils.clickhouseWrite(provinceDF, "nat_log.nat_report")
-      ClickUtils.clickhouseWrite(operatorDF, "nat_log.nat_report")
-      ClickUtils.clickhouseWrite(targetIpDF, "nat_log.nat_report")
-      ClickUtils.clickhouseWrite(cityDF, "nat_log.nat_report")
-      ClickUtils.clickhouseWrite(hostIPDF, "nat_log.nat_report")
+        val immutableRowKey = new ImmutableBytesWritable(rowkey)
 
-      // TODO clickhouse实现hbase二级索引
-      ClickUtils.clickhouseWrite(rowKeysDF, "nat_log.nat_rowKey")
+        val accesstime = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(per.accesstime * 1000)))
+        val sourceIp = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(per.sourceIp))
+        val sourcePort = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(per.sourcePort))
+        val targetIp = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(per.targetIp))
+        val targetPort = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(per.targetPort))
+        val protocol = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(per.protocol))
+        val convertedIp = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(per.convertedIp))
+        val convertedPort = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(per.convertedPort))
+        val username = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(per.username))
 
-      // TODO 日志分析计数写入mysql
-      DB.localTx { implicit session =>
-        val nat_count = msgRDD.count()
-        SQL("insert into nat_count (count_5min,count_sec,update_time) values (?,?,?)")
-          .bind(nat_count, nat_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(time * 1000))
-          .update()
-          .apply()
+        Array(
+          (immutableRowKey, accesstime),
+          (immutableRowKey, sourceIp),
+          (immutableRowKey, sourcePort),
+          (immutableRowKey, targetIp),
+          (immutableRowKey, targetPort),
+          (immutableRowKey, protocol),
+          (immutableRowKey, convertedIp),
+          (immutableRowKey, convertedPort),
+          (immutableRowKey, username)
+        )
+      }).flatMap(per => per)
 
-        val nat_hbase_count = userAnalyzeRDD.count()
-        SQL("insert into nat_hbase_count (count_5min,count_sec,update_time) values (?,?,?)")
-          .bind(nat_hbase_count, nat_hbase_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(time * 1000))
-          .update()
-          .apply()
-      }
+    val table = hbaseConn.getTable(TableName.valueOf(tableName))
+    val job = Job.getInstance(hbaseConf)
+    job.setMapOutputKeyClass(classOf[ImmutableBytesWritable])
+    job.setMapOutputValueClass(classOf[KeyValue])
+    HFileOutputFormat2.configureIncrementalLoadMap(job, table)
 
-    } catch {
-      case e: Exception =>
-        e.printStackTrace()
-        logger.error("写入异常")
-    }
+    hbaseRDD.saveAsNewAPIHadoopFile("/test/bulkload",
+      classOf[ImmutableBytesWritable],
+      classOf[KeyValue],
+      classOf[HFileOutputFormat2],
+      hbaseConf)
+
+    val bulkLoader = new LoadIncrementalHFiles(hbaseConf)
+    val regionLocator = hbaseConn.getRegionLocator(TableName.valueOf(tableName))
+    bulkLoader.doBulkLoad(new Path("/test/bulkload"), admin, table, regionLocator)
+//      .saveAsHadoopDataset(jobConf)
+
+    //    try {
+    //      //  TODO  维度聚合报表数据写入clickhouse
+    //      ClickUtils.clickhouseWrite(provinceDF, "nat_log.nat_report")
+    //      ClickUtils.clickhouseWrite(operatorDF, "nat_log.nat_report")
+    //      ClickUtils.clickhouseWrite(targetIpDF, "nat_log.nat_report")
+    //      ClickUtils.clickhouseWrite(cityDF, "nat_log.nat_report")
+    //      ClickUtils.clickhouseWrite(hostIPDF, "nat_log.nat_report")
+    //
+    //      // TODO clickhouse实现hbase二级索引
+    //      ClickUtils.clickhouseWrite(rowKeysDF, "nat_log.nat_rowKey")
+    //
+    //      // TODO 日志分析计数写入mysql
+    //      DB.localTx { implicit session =>
+    //        val nat_count = msgRDD.count()
+    //        SQL("insert into nat_count (count_5min,count_sec,update_time) values (?,?,?)")
+    //          .bind(nat_count, nat_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(time * 1000))
+    //          .update()
+    //          .apply()
+    //
+    //        val nat_hbase_count = userAnalyzeRDD.count()
+    //        SQL("insert into nat_hbase_count (count_5min,count_sec,update_time) values (?,?,?)")
+    //          .bind(nat_hbase_count, nat_hbase_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(time * 1000))
+    //          .update()
+    //          .apply()
+    //      }
+    //
+    //    } catch {
+    //      case e: Exception =>
+    //        e.printStackTrace()
+    //        logger.error("写入异常")
+    //    }
 
     msgRDD.unpersist()
 

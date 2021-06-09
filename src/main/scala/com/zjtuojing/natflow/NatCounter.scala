@@ -85,7 +85,7 @@ object NatCounter {
 
     // 指定数据库连接url，userName，password
 
-    val url = properties.getProperty("mysql.url3")
+    val url = properties.getProperty("mysql.url")
 
     val userName = properties.getProperty("mysql.username")
 
@@ -99,7 +99,7 @@ object NatCounter {
       SQL(
         s"""
            |select
-           |count_min
+           |count_5min
            |from
            |nat_count
            |where

@@ -38,7 +38,7 @@ public class IpSearch {
 
 
         Path path = Paths
-                .get("qqzeng-ip-utf8.dat");
+                .get("home/tool/qqzeng-ip-utf8.dat");
 
 
         try {

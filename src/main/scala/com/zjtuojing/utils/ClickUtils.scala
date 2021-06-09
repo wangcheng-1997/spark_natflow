@@ -41,11 +41,6 @@ object ClickUtils {
     val conf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
       .setMaster("local[*]")
-    val prop = new Properties()
-    //    prop.put("driver", "com.github.housepower.jdbc.ClickHouseDriver")
-    //    //  prop.put("driver", "ru.yandex.clickhouse.ClickHouseDriver")
-    //    prop.put("user", "tuojing")
-    //    prop.put("password", "123456")
 
     val spark = SparkSession.builder().config(conf).getOrCreate()
 
@@ -53,11 +48,9 @@ object ClickUtils {
       .format("jdbc")
       .option("driver", "com.github.housepower.jdbc.ClickHouseDriver")
       .option("url", url)
-
       .option("dbtable", "dns_flow.dns_flow_clear")
       .load()
 
-    import org.apache.spark.sql.functions._
-    frame.orderBy(-col("resolver")).where("accesstime='1616631060'").show()
+    frame.show(10)
   }
 }
