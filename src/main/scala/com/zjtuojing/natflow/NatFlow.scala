@@ -9,22 +9,22 @@ import com.tuojing.core.common.aes.AESUtils
 import com.zjtuojing.natflow.BeanClass.{NATBean, NATReportBean, SecondaryIndexBean}
 import com.zjtuojing.utils.{ClickUtils, JedisPool, MyUtils}
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.hbase.{HBaseConfiguration, KeyValue, TableName}
-import org.apache.hadoop.hbase.client.{ConnectionFactory, Put, Result}
+import org.apache.hadoop.hbase.HBaseConfiguration
+import org.apache.hadoop.hbase.client.Put
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapred.TableOutputFormat
-import org.apache.hadoop.hbase.mapreduce.{HFileOutputFormat2, LoadIncrementalHFiles}
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.mapred.JobConf
-import org.apache.hadoop.mapreduce.Job
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext, Time}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.slf4j.{Logger, LoggerFactory}
 import redis.clients.jedis.Jedis
-import scalikejdbc.{ConnectionPool, DB, SQL}
 import scalikejdbc.config.DBs
+import scalikejdbc.{ConnectionPool, DB, SQL}
+
+import scala.collection.mutable.ListBuffer
 
 /**
  * ClassName NatFlow
@@ -53,8 +53,10 @@ object NatFlow {
 
     val sparkConf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-      .setMaster("local[*]")
+      //      .setMaster("local[*]")
       .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+      .set("spark.kryoserializer.buffer.max", "256m")
+      .set("spark.kryoserializer.buffer", "64m")
 
     sparkConf.registerKryoClasses(
       Array(
@@ -84,44 +86,46 @@ object NatFlow {
     stream.foreachRDD((rdd, time) => {
       logger.info(s"task start ..... batch time:{$time}", rdd.count())
       //      获取当前时间
-      call(sc, spark, time)
+      call(sc, spark, time.milliseconds)
     })
     ssc.start()
     ssc.awaitTermination()
 
   }
 
-  def call(sc: SparkContext, spark: SparkSession, batchTime: Time): Any = {
-    //目录数据样本 hdfs://30.254.234.31/nat_log/20210607/09/40
+  def call(sc: SparkContext, spark: SparkSession, batchTime: Long): Any = {
+    val paths = new ListBuffer[String]()
+    var time = 0L
+    //多取前一个文件， 部分记录在前一个文件中
+    //目录数据样本 hdfs://30.250.60.7/dns_log/2019/12/25/1621_1577262060
     val hdfs = org.apache.hadoop.fs.FileSystem.get(sc.hadoopConfiguration)
+    for (w <- 10 * 60 until  5 * 60 by -60) {
+      time = (batchTime - w * 1000L) / 1000
+      val path = s"/nat_log/${new SimpleDateFormat("yyyyMMdd/HH/mm").format(time * 1000)}"
 
-    val time: Long = (batchTime.milliseconds - 300000) / 1000
-
-    val path
-    //    = s"/nat_log/${new SimpleDateFormat("yyyyMMdd/HH/mm").format(time * 1000)}"
-    = "/nat_log/20210607/09/40/2021_06_07_093801-6e87.log"
-
-    var natPath: String = ""
-
-    try {
-      if (hdfs.exists(new Path(path))) {
-        natPath = path
-      } else {
-        logger.info(s"file not exists $path")
+      try {
+        if (hdfs.exists(new Path(path))) {
+          //        if (w >= 580) {
+          paths += path
+        } else {
+          logger.info(s"file not exists ${path}")
+        }
+      } catch {
+        case e: Exception => {
+          logger.error(s"FileException ${path}", e)
+        }
       }
-    } catch {
-      case e: Exception =>
-        logger.error(s"FileException $path", e)
     }
 
-    if ("".equals(natPath)) {
+    if (paths.size == 0) {
       logger.info("paths size is  0,  empty ..... return ")
       return
     }
 
-    val baseRDD = sc.textFile(natPath)
+    val natPath = paths.mkString(",")
+
+    val baseRDD = sc.textFile(natPath, 360)
       .map(_.trim)
-      .repartition(360)
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     val jedisPool = JedisPool.getJedisPool()
@@ -131,15 +135,15 @@ object NatFlow {
     val userMaps: Map[String, String] = getUserName(jedis)
     val userMapsBC = sc.broadcast(userMaps)
 
-    val now = new SimpleDateFormat("yyyyMMddHHmm").format(time * 1000)
+//    val now = new SimpleDateFormat("yyyyMMddHHmm").format(time * 1000)
 
-    //    // 1 主机设备IP解析
-    //    val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
-    //      .coalesce(360)
-    //      .map(per => {
-    //        val hostIp = per.split(" ")(0)
-    //        ((time, hostIp.substring(0, hostIp.size - 5)), 1)
-    //      }).reduceByKey(_ + _).map(per => NATReportBean("hostIP", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+    // 1 主机设备IP解析
+    val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
+      .coalesce(360)
+      .map(per => {
+        val hostIp = per.split(" ")(0)
+        ((time, hostIp.substring(0, hostIp.size - 5)), 1)
+      }).reduceByKey(_ + _).map(per => NATReportBean("hostIP", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
 
     // 2 日志Msg解析
     val msgRDD = baseRDD.filter(_.startsWith("Msg"))
@@ -162,9 +166,9 @@ object NatFlow {
           val convert = log(1).split(" ")(3).split("[ :]")
           date = time
           protocol = ips(5)
-          sourceIp = ips(1)
+          sourceIp = ips(0)
           targetIp = ips(3)
-          sourcePort = ips(2)
+          sourcePort = ips(1)
           targetPort = ips(4)
           convertedIp = convert(0)
           convertedPort = convert(1)
@@ -198,56 +202,86 @@ object NatFlow {
 
         val username = userMapsBC.value.getOrElse(sourceIp, "UnKnown")
 
-        val rowkey = MyUtils.MD5Encode(sourceIp + sourcePort + targetIp + targetPort + convertedIp + convertedPort).substring(8, 24) + "_" + (Long.MaxValue - (date * 1000))
+        val rowkey = MyUtils.MD5Encode(convertedIp + convertedPort).substring(8, 24) + "_" + (Long.MaxValue - (date * 1000))
 
         NATBean(date, sourceIp, sourcePort, targetIp, targetPort, protocol, convertedIp, convertedPort, operate, province, city, username, rowkey)
-
 
       }).persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     userMapsBC.unpersist()
 
-    //    // 2.1 province维度聚合
-    //    val province = msgRDD.map(per => {
-    //      ((time, per.province), 1)
-    //    }).reduceByKey(_ + _)
-    //      .map(per => NATReportBean("province", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
-    //
-    //    // 2.2 运营商维度聚合
-    //    val operator = msgRDD.map(per => {
-    //      ((time, per.operator), 1)
-    //    }).reduceByKey(_ + _).map(per => NATReportBean("operator", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
-    //
-    //    // 2.3 目标IP维度聚合
-    //    val targetIp = msgRDD.map(per => ((time, per.targetIp), 1))
-    //      .reduceByKey(_ + _)
-    //      .sortBy(_._2)
-    //      .filter(_._2 >= 100)
-    //      .take(20000)
-    //      .map(per => NATReportBean("targetIp", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
-    //
-    //    // 2.4 省会维度聚合
-    //    val city = msgRDD.map(per => ((time, per.city), 1))
-    //      .reduceByKey(_ + _)
-    //      .map(per => NATReportBean("city", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
-    //
-    //    val provinceDF = spark.createDataFrame(province).coalesce(100)
-    //    val operatorDF = spark.createDataFrame(operator).coalesce(100)
-    //    val targetIpDF = spark.createDataFrame(targetIp).coalesce(100)
-    //    val cityDF = spark.createDataFrame(city).coalesce(100)
-    //    val hostIPDF = spark.createDataFrame(hostIpRDD).coalesce(100)
+    // 2.1 province维度聚合
+    val province = msgRDD.map(per => {
+      ((time, per.province), 1)
+    }).reduceByKey(_ + _)
+      .map(per => NATReportBean("province", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+
+    // 2.2 运营商维度聚合
+    val operator = msgRDD.map(per => {
+      ((time, per.operator), 1)
+    }).reduceByKey(_ + _).map(per => NATReportBean("operator", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+
+    // 2.3 目标IP维度聚合
+    val targetIp = msgRDD.map(per => ((time, per.targetIp), 1))
+      .reduceByKey(_ + _)
+      .sortBy(_._2)
+      .take(100)
+      .map(per => NATReportBean("targetIp", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+
+    // 2.4 省会维度聚合
+    val city = msgRDD.map(per => ((time, per.city), 1))
+      .reduceByKey(_ + _)
+      .map(per => NATReportBean("city", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+
+    // 2.5 宽带账号维度聚合
+    val username = msgRDD.map(per => ((time, per.username), 1))
+      .reduceByKey(_ + _)
+      .sortBy(_._2)
+      .take(100)
+      .map(per => NATReportBean("username", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+
+    // 2.6 源ip维度聚合
+    val sourceIp = msgRDD.map(per => ((time, per.sourceIp), 1))
+      .reduceByKey(_ + _)
+      .sortBy(_._2)
+      .take(100)
+      .map(per => NATReportBean("sourceIp", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
+
+    val provinceDF = spark.createDataFrame(province).coalesce(100)
+    val operatorDF = spark.createDataFrame(operator).coalesce(100)
+    val targetIpDF = spark.createDataFrame(targetIp).coalesce(100)
+    val cityDF = spark.createDataFrame(city).coalesce(100)
+    val hostIPDF = spark.createDataFrame(hostIpRDD).coalesce(100)
+    val usernameDF = spark.createDataFrame(username).coalesce(100)
+    val sourceIpDF = spark.createDataFrame(sourceIp).coalesce(100)
 
     val userAnalyzeRDD = msgRDD
-      .filter(_.username != "UnKnown")
+      .map(per => (per.rowkey, per)).reduceByKey((x, y) => x).map(_._2)
+//      .filter(_.username != "UnKnown")
       .coalesce(360)
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
-    //    // TODO 用户名称活跃统计
-    //    msgRDD.map(per => (per.username, 1))
-    //      .reduceByKey(_ + _)
-    //      .coalesce(1)
-    //      .saveAsTextFile(s"hdfs://nns/nat_user/${now.substring(0, 8)}/${now.substring(8, 10)}/${now.substring(10)}")
-    //
+    try {
+      // TODO 日志分析计数写入mysql
+      DB.localTx { implicit session =>
+        val nat_count = msgRDD.count()
+        SQL("insert into nat_count (count_5min,count_sec,update_time) values (?,?,?)")
+          .bind(nat_count, nat_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(time * 1000))
+          .update()
+          .apply()
+
+        val nat_hbase_count = userAnalyzeRDD.count()
+        SQL("insert into nat_hbase_count (count_5min,count_sec,update_time) values (?,?,?)")
+          .bind(nat_hbase_count, nat_hbase_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(time * 1000))
+          .update()
+          .apply()
+      }
+    } catch {
+      case e: Exception =>
+        e.printStackTrace()
+        logger.error("写入异常")
+    }
+
     //    val rowKeys = userAnalyzeRDD.map(per => {
     //      SecondaryIndexBean(new Timestamp(per.accesstime * 1000), MyUtils.MD5Encode(per.targetIp + per.targetPort + per.convertedIp + per.convertedPort).substring(8, 24), per.rowkey)
     //    })
@@ -255,96 +289,55 @@ object NatFlow {
 
     val tableName = "syslog"
 
+    //     bulkload
     val hbaseConf = HBaseConfiguration.create()
     hbaseConf.set("hbase.zookeeper.quorum", properties.getProperty("hbase.zookeeper.quorum")) //设置zooKeeper集群地址，也可以通过将hbase-site.xml导入classpath，但是建议在程序里这样设置
     hbaseConf.set("hbase.zookeeper.property.clientPort", "2181") //设置zookeeper连接端口，默认2181
     hbaseConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
 
-    val hbaseConn = ConnectionFactory.createConnection(hbaseConf)
-    val admin = hbaseConn.getAdmin
-
     // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
     val jobConf = new JobConf(hbaseConf)
     jobConf.setOutputFormat(classOf[TableOutputFormat])
+    userAnalyzeRDD.mapPartitions((per: Iterator[NATBean]) => {
+      var res = List[(ImmutableBytesWritable, Put)]()
+      while (per.hasNext) {
+        val perline = per.next()
+        val rowkey = Bytes.toBytes(perline.rowkey)
+        val put = new Put(rowkey)
 
-    val hbaseRDD = userAnalyzeRDD.map(per=>(per.rowkey,per)).reduceByKey((x,y) => x).map(_._2).sortBy(_.rowkey)
-      .map(per => {
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(perline.accesstime * 1000)))
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(perline.sourceIp))
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(perline.sourcePort))
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(perline.targetIp))
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(perline.targetPort))
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(perline.protocol))
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(perline.convertedIp))
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(perline.convertedPort))
+        put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(perline.username))
+        res.::=(new ImmutableBytesWritable, put)
+      }
+      res.iterator
+    })
+      .saveAsHadoopDataset(jobConf)
 
-        val rowkey = Bytes.toBytes(per.rowkey)
+    try {
+      //  TODO  维度聚合报表数据写入clickhouse
+      ClickUtils.clickhouseWrite(provinceDF, "nat_log.nat_report")
+      ClickUtils.clickhouseWrite(operatorDF, "nat_log.nat_report")
+      ClickUtils.clickhouseWrite(targetIpDF, "nat_log.nat_report")
+      ClickUtils.clickhouseWrite(cityDF, "nat_log.nat_report")
+      ClickUtils.clickhouseWrite(hostIPDF, "nat_log.nat_report")
+      ClickUtils.clickhouseWrite(usernameDF, "nat_log.nat_report")
+      ClickUtils.clickhouseWrite(sourceIpDF, "nat_log.nat_report")
 
-        val immutableRowKey = new ImmutableBytesWritable(rowkey)
+      //      // TODO clickhouse实现hbase二级索引
+      //      ClickUtils.clickhouseWrite(rowKeysDF, "nat_log.nat_rowKey")
 
-        val accesstime = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(per.accesstime * 1000)))
-        val sourceIp = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(per.sourceIp))
-        val sourcePort = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(per.sourcePort))
-        val targetIp = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(per.targetIp))
-        val targetPort = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(per.targetPort))
-        val protocol = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(per.protocol))
-        val convertedIp = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(per.convertedIp))
-        val convertedPort = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(per.convertedPort))
-        val username = new KeyValue(rowkey, Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(per.username))
-
-        Array(
-          (immutableRowKey, accesstime),
-          (immutableRowKey, sourceIp),
-          (immutableRowKey, sourcePort),
-          (immutableRowKey, targetIp),
-          (immutableRowKey, targetPort),
-          (immutableRowKey, protocol),
-          (immutableRowKey, convertedIp),
-          (immutableRowKey, convertedPort),
-          (immutableRowKey, username)
-        )
-      }).flatMap(per => per)
-
-    val table = hbaseConn.getTable(TableName.valueOf(tableName))
-    val job = Job.getInstance(hbaseConf)
-    job.setMapOutputKeyClass(classOf[ImmutableBytesWritable])
-    job.setMapOutputValueClass(classOf[KeyValue])
-    HFileOutputFormat2.configureIncrementalLoadMap(job, table)
-
-    hbaseRDD.saveAsNewAPIHadoopFile("/test/bulkload",
-      classOf[ImmutableBytesWritable],
-      classOf[KeyValue],
-      classOf[HFileOutputFormat2],
-      hbaseConf)
-
-    val bulkLoader = new LoadIncrementalHFiles(hbaseConf)
-    val regionLocator = hbaseConn.getRegionLocator(TableName.valueOf(tableName))
-    bulkLoader.doBulkLoad(new Path("/test/bulkload"), admin, table, regionLocator)
-//      .saveAsHadoopDataset(jobConf)
-
-    //    try {
-    //      //  TODO  维度聚合报表数据写入clickhouse
-    //      ClickUtils.clickhouseWrite(provinceDF, "nat_log.nat_report")
-    //      ClickUtils.clickhouseWrite(operatorDF, "nat_log.nat_report")
-    //      ClickUtils.clickhouseWrite(targetIpDF, "nat_log.nat_report")
-    //      ClickUtils.clickhouseWrite(cityDF, "nat_log.nat_report")
-    //      ClickUtils.clickhouseWrite(hostIPDF, "nat_log.nat_report")
-    //
-    //      // TODO clickhouse实现hbase二级索引
-    //      ClickUtils.clickhouseWrite(rowKeysDF, "nat_log.nat_rowKey")
-    //
-    //      // TODO 日志分析计数写入mysql
-    //      DB.localTx { implicit session =>
-    //        val nat_count = msgRDD.count()
-    //        SQL("insert into nat_count (count_5min,count_sec,update_time) values (?,?,?)")
-    //          .bind(nat_count, nat_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(time * 1000))
-    //          .update()
-    //          .apply()
-    //
-    //        val nat_hbase_count = userAnalyzeRDD.count()
-    //        SQL("insert into nat_hbase_count (count_5min,count_sec,update_time) values (?,?,?)")
-    //          .bind(nat_hbase_count, nat_hbase_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(time * 1000))
-    //          .update()
-    //          .apply()
-    //      }
-    //
-    //    } catch {
-    //      case e: Exception =>
-    //        e.printStackTrace()
-    //        logger.error("写入异常")
-    //    }
+    } catch {
+      case e: Exception =>
+        e.printStackTrace()
+        logger.error("写入异常")
+    }
 
     msgRDD.unpersist()
 
@@ -354,24 +347,6 @@ object NatFlow {
     jedis.close()
     jedisPool.destroy()
 
-  }
-
-  def getUserNameAES(jedis: Jedis): Map[String, String] = {
-    var maps = Map[String, String]()
-    try {
-      maps = jedis.hgetAll("nat:radius")
-        .values().toArray
-        .map(json => {
-          val jobj = JSON.parseObject(AESUtils.decryptData("tj!@#123#@!tj&!$", json.toString))
-          (jobj.getString("ip"), jobj.getString("account"))
-        }).toMap
-    } catch {
-      case e: Exception =>
-        maps = maps
-        logger.error("getUserName", e)
-      //        e.printStackTrace()
-    }
-    maps
   }
 
   def getUserName(jedis: Jedis): Map[String, String] = {

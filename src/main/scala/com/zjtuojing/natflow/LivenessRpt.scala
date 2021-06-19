@@ -1,11 +1,11 @@
 package com.zjtuojing.natflow
 
+import java.sql.Timestamp
 import java.text.SimpleDateFormat
 
-import com.zjtuojing.utils.MyUtils
+import com.zjtuojing.utils.{ClickUtils, MyUtils}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
-import org.elasticsearch.spark.sql._
 
 object LivenessRpt {
   def main(args: Array[String]): Unit = {
@@ -15,14 +15,8 @@ object LivenessRpt {
 
     val conf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-//      .setMaster("local[*]")
-      .set("es.port", properties.getProperty("es.port"))
-      .set("es.nodes", properties.getProperty("es.nodes"))
-      .set("es.nodes.wan.only", properties.getProperty("es.nodes.wan.only"))
+      .setMaster("local[*]")
       .set("spark.speculation", "false")
-//      .set("spark.speculation.interval", "5000")
-//      .set("spark.speculation.quantile", "0.9")
-//      .set("spark.speculation.multiplier", "2")
       .set("spark.locality.wait", "10")
       .set("spark.storage.memoryFraction", "0.3")
 
@@ -33,7 +27,7 @@ object LivenessRpt {
       Array(
         classOf[Array[String]],
         classOf[Map[String, Any]]
-      )    )
+      ))
     val spark = SparkSession.builder().config(conf).getOrCreate()
     val sc = spark.sparkContext
 
@@ -46,15 +40,25 @@ object LivenessRpt {
     sc.hadoopConfiguration.set("dfs.client.failover.proxy.provider.nns", properties.getProperty("dfs.client.failover.proxy.provider.nns"))
 
     val value = sc.textFile(s"hdfs://nns/nat_user/$date/*/*")
-      .map((_, 1))
+      .coalesce(36)
+      .map(per => {
+        val users = per
+        val str = per.substring(1, users.length - 1).split(",")
+        if (str.size==2) (str(0),str(1).toInt)
+        else (str(0)+","+str(1),str(2).toInt)
+      })
       .reduceByKey(_ + _)
       .sortBy(_._2, false, 1)
-      .map(per => (per._1, per._2, datetime))
+      .map(per => (per._1, per._2, new Timestamp(datetime * 1000)))
+
+//    value.foreach(println)
 
     import spark.implicits._
 
-    value.toDF("username", "resolver", "accesstime")
-      .saveToEs(s"/bigdata_nat_liveness/liveness")
+    val userDF = value.toDF("username", "resolver", "accesstime")
+
+    ClickUtils.clickhouseWrite(userDF, "nat_log.nat_liveness")
+
 
   }
 }

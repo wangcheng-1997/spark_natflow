@@ -39,41 +39,45 @@ object NatCounter {
       sys.exit()
     }
 
-    val Array(task) = args
+    getFlowCountDD(properties)
 
-    val sparkConf: SparkConf = new SparkConf()
-      .setAppName("ESAggregate")
-      //      .setMaster("local[*]")
-      .set("es.port", properties.getProperty("es.port"))
-      .set("es.nodes", properties.getProperty("es.nodes"))
-      .set("es.nodes.wan.only", properties.getProperty("es.nodes.wan.only"))
-      .set("es.index.auto.create", properties.getProperty("es.index.auto.create"))
-      .set("es.index.read.missing.as.empty", "true")
 
-    //采用kryo序列化库
-    sparkConf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    //注册
-    //      .set("mapping.date.rich", "false")
-    //      .set("max.docs.per.partition","100")
-    //      .set("spark.es.scroll.size","10000")
-
-    val spark = SparkSession.builder().config(sparkConf).getOrCreate()
-    val sc: SparkContext = spark.sparkContext
-
-    sc.hadoopConfiguration.set("fs.defaultFS", properties.getProperty("fs.defaultFS"))
-    sc.hadoopConfiguration.set("dfs.nameservices", properties.getProperty("dfs.nameservices"))
-    sc.hadoopConfiguration.set("dfs.ha.namenodes.nns", properties.getProperty("dfs.ha.namenodes.nns"))
-    sc.hadoopConfiguration.set("dfs.namenode.rpc-address.nns.nn1", properties.getProperty("dfs.namenode.rpc-address.nns.nn1"))
-    sc.hadoopConfiguration.set("dfs.namenode.rpc-address.nns.nn2", properties.getProperty("dfs.namenode.rpc-address.nns.nn2"))
-    sc.hadoopConfiguration.set("dfs.client.failover.proxy.provider.nns", properties.getProperty("dfs.client.failover.proxy.provider.nns"))
-
-    task match {
-      case "hh" => getNATAnalyze(sc)
-      case "dd" =>
-        getNATAnalyzeDD(sc)
-        getFlowCountDD(properties)
-      case _ => println("NAT日志分析跳过执行...")
-    }
+//    val Array(task) = args
+//
+//    val sparkConf: SparkConf = new SparkConf()
+//      .setAppName("ESAggregate")
+//      //      .setMaster("local[*]")
+//      .set("es.port", properties.getProperty("es.port"))
+//      .set("es.nodes", properties.getProperty("es.nodes"))
+//      .set("es.nodes.wan.only", properties.getProperty("es.nodes.wan.only"))
+//      .set("es.index.auto.create", properties.getProperty("es.index.auto.create"))
+//      .set("es.index.read.missing.as.empty", "true")
+//
+//    //采用kryo序列化库
+//    sparkConf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+//    //注册
+//    //      .set("mapping.date.rich", "false")
+//    //      .set("max.docs.per.partition","100")
+//    //      .set("spark.es.scroll.size","10000")
+//
+//    val spark = SparkSession.builder().config(sparkConf).getOrCreate()
+//    val sc: SparkContext = spark.sparkContext
+//
+//    sc.hadoopConfiguration.set("fs.defaultFS", properties.getProperty("fs.defaultFS"))
+//    sc.hadoopConfiguration.set("dfs.nameservices", properties.getProperty("dfs.nameservices"))
+//    sc.hadoopConfiguration.set("dfs.ha.namenodes.nns", properties.getProperty("dfs.ha.namenodes.nns"))
+//    sc.hadoopConfiguration.set("dfs.namenode.rpc-address.nns.nn1", properties.getProperty("dfs.namenode.rpc-address.nns.nn1"))
+//    sc.hadoopConfiguration.set("dfs.namenode.rpc-address.nns.nn2", properties.getProperty("dfs.namenode.rpc-address.nns.nn2"))
+//    sc.hadoopConfiguration.set("dfs.client.failover.proxy.provider.nns", properties.getProperty("dfs.client.failover.proxy.provider.nns"))
+//
+//    getNATAnalyzeDD(sc)
+//    task match {
+//      case "hh" => getNATAnalyze(sc)
+//      case "dd" =>
+//
+//        getFlowCountDD(properties)
+//      case _ => println("NAT日志分析跳过执行...")
+//    }
 
   }
 

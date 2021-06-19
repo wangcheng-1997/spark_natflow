@@ -1,5 +1,6 @@
 package com.zjtuojing.utils
 
+import com.alibaba.fastjson.JSON
 import redis.clients.jedis.{Jedis, JedisPool}
 
 object JedisPool {
@@ -39,11 +40,14 @@ object JedisPool {
 
     val jedisPool = getJedisPool()
     val jedis = getJedisClient(jedisPool)
-    println(jedis.exists("nat:radius"))
-    jedis.hgetAll("nat:radius")
+    val map = jedis.hgetAll("nat:radius")
       .values().toArray
-      .take(1).foreach(println(_))
+      .map(json => {
+        val jobj = JSON.parseObject(json.toString)
+        (jobj.getString("account"), jobj.getString("ip"))
+      }).toMap
 
+    println(map.getOrElse("4,-(+A69yq23102308","null"))
 
     jedis.close()
   }
