@@ -99,7 +99,7 @@ object NatFlow {
     //多取前一个文件， 部分记录在前一个文件中
     //目录数据样本 hdfs://30.250.60.7/dns_log/2019/12/25/1621_1577262060
     val hdfs = org.apache.hadoop.fs.FileSystem.get(sc.hadoopConfiguration)
-    for (w <- 10 * 60 until  5 * 60 by -60) {
+    for (w <- 10 * 60 until 5 * 60 by -60) {
       time = (batchTime - w * 1000L) / 1000
       val path = s"/nat_log/${new SimpleDateFormat("yyyyMMdd/HH/mm").format(time * 1000)}"
 
@@ -135,14 +135,14 @@ object NatFlow {
     val userMaps: Map[String, String] = getUserName(jedis)
     val userMapsBC = sc.broadcast(userMaps)
 
-//    val now = new SimpleDateFormat("yyyyMMddHHmm").format(time * 1000)
+    //    val now = new SimpleDateFormat("yyyyMMddHHmm").format(time * 1000)
 
     // 1 主机设备IP解析
     val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
       .coalesce(360)
       .map(per => {
         val hostIp = per.split(" ")(0)
-        ((batchTime, hostIp.substring(0, hostIp.size - 5)), 1)
+        ((batchTime - 600 * 1000, hostIp.substring(0, hostIp.size - 5)), 1)
       }).reduceByKey(_ + _).map(per => NATReportBean("hostIP", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2 日志Msg解析
@@ -212,36 +212,36 @@ object NatFlow {
 
     // 2.1 province维度聚合
     val province = msgRDD.map(per => {
-      ((batchTime, per.province), 1)
+      ((batchTime - 600 * 1000, per.province), 1)
     }).reduceByKey(_ + _)
       .map(per => NATReportBean("province", new Timestamp(per._1._1 * 1000), per._1._2, per._2))
 
     // 2.2 运营商维度聚合
     val operator = msgRDD.map(per => {
-      ((batchTime, per.operator), 1)
+      ((batchTime - 600 * 1000, per.operator), 1)
     }).reduceByKey(_ + _).map(per => NATReportBean("operator", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2.3 目标IP维度聚合
-    val targetIp = msgRDD.map(per => ((batchTime, per.targetIp), 1))
+    val targetIp = msgRDD.map(per => ((batchTime - 600 * 1000, per.targetIp), 1))
       .reduceByKey(_ + _)
       .sortBy(_._2)
       .take(100)
       .map(per => NATReportBean("targetIp", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2.4 省会维度聚合
-    val city = msgRDD.map(per => ((batchTime, per.city), 1))
+    val city = msgRDD.map(per => ((batchTime - 600 * 1000, per.city), 1))
       .reduceByKey(_ + _)
       .map(per => NATReportBean("city", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2.5 宽带账号维度聚合
-    val username = msgRDD.map(per => ((batchTime, per.username), 1))
+    val username = msgRDD.map(per => ((batchTime - 600 * 1000, per.username), 1))
       .reduceByKey(_ + _)
       .sortBy(_._2)
       .take(100)
       .map(per => NATReportBean("username", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2.6 源ip维度聚合
-    val sourceIp = msgRDD.map(per => ((batchTime, per.sourceIp), 1))
+    val sourceIp = msgRDD.map(per => ((batchTime - 600 * 1000, per.sourceIp), 1))
       .reduceByKey(_ + _)
       .sortBy(_._2)
       .take(100)
@@ -257,7 +257,7 @@ object NatFlow {
 
     val userAnalyzeRDD = msgRDD
       .map(per => (per.rowkey, per)).reduceByKey((x, y) => x).map(_._2)
-//      .filter(_.username != "UnKnown")
+      //      .filter(_.username != "UnKnown")
       .coalesce(360)
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
