@@ -142,7 +142,7 @@ object MyUtils {
   def loadConf(): Properties = {
 
     val properties = new Properties
-    val ipstream = new FileInputStream("conf/config.properties")
+    val ipstream = new FileInputStream("config.properties")
     properties.load(ipstream)
     properties
   }

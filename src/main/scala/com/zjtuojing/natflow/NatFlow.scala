@@ -266,13 +266,13 @@ object NatFlow {
       DB.localTx { implicit session =>
         val nat_count = msgRDD.count()
         SQL("insert into nat_count (count_5min,count_sec,update_time) values (?,?,?)")
-          .bind(nat_count, nat_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(batchTime))
+          .bind(nat_count, nat_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(batchTime - 600 * 1000))
           .update()
           .apply()
 
         val nat_hbase_count = userAnalyzeRDD.count()
         SQL("insert into nat_hbase_count (count_5min,count_sec,update_time) values (?,?,?)")
-          .bind(nat_hbase_count, nat_hbase_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(batchTime))
+          .bind(nat_hbase_count, nat_hbase_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(batchTime - 600 * 1000))
           .update()
           .apply()
       }
