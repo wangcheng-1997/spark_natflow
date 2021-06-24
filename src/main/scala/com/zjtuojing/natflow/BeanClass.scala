@@ -17,10 +17,9 @@ object BeanClass {
     println(str)
   }
   // NAT日志基础解析
-  case class NATBean(accesstime: Long, sourceIp: String, sourcePort: String, targetIp: String, targetPort: String, protocol: String, convertedIp: String, convertedPort: String, operator: String,
-                     province: String, city: String, username: String, rowkey: String)
+  case class NATBean(accesstime: Long, sourceIp: String, sourcePort: String, targetIp: String, targetPort: String, protocol: String, convertedIp: String, convertedPort: String, username: String, rowkey: String)
 
-  case class NATReportBean(types: String, accesstime: Timestamp, data: String, count: Int)
+  case class NATReportBean(types: String, accesstime: Timestamp, data: String, count: Long)
 
   case class SecondaryIndexBean(accesstime: Timestamp, partKey: String, rowkey: String)
 
