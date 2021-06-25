@@ -47,6 +47,14 @@ object NatFlow {
 
   DBs.setupAll()
 
+  val tableName = "syslog"
+
+  //     bulkload
+  val hbaseConf = HBaseConfiguration.create()
+  hbaseConf.set("hbase.zookeeper.quorum", properties.getProperty("hbase.zookeeper.quorum")) //设置zooKeeper集群地址，也可以通过将hbase-site.xml导入classpath，但是建议在程序里这样设置
+  hbaseConf.set("hbase.zookeeper.property.clientPort", "2181") //设置zookeeper连接端口，默认2181
+  hbaseConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
+
 
   def main(args: Array[String]): Unit = {
 
@@ -330,17 +338,10 @@ object NatFlow {
         logger.error("写入异常")
     }
 
-    val tableName = "syslog"
-
-    //     bulkload
-    val hbaseConf = HBaseConfiguration.create()
-    hbaseConf.set("hbase.zookeeper.quorum", properties.getProperty("hbase.zookeeper.quorum")) //设置zooKeeper集群地址，也可以通过将hbase-site.xml导入classpath，但是建议在程序里这样设置
-    hbaseConf.set("hbase.zookeeper.property.clientPort", "2181") //设置zookeeper连接端口，默认2181
-    hbaseConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
-
     // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
     val jobConf = new JobConf(hbaseConf)
     jobConf.setOutputFormat(classOf[TableOutputFormat])
+
     userAnalyzeRDD
       //        .coalesce(360)
       .mapPartitions((per: Iterator[NATBean]) => {
@@ -365,12 +366,12 @@ object NatFlow {
       })
       .saveAsHadoopDataset(jobConf)
 
+    userAnalyzeRDD.unpersist()
     targetIpDetail.unpersist()
     msgRDD.unpersist()
-
+    baseRDD.unpersist()
 
     logger.info("-----------------------------[批处理结束]")
-    baseRDD.unpersist()
   }
 
   def getUserName(jedis: Jedis): Map[String, String] = {
