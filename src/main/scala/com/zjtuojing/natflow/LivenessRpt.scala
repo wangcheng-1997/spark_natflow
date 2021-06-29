@@ -4,13 +4,18 @@ import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Properties
 
-import com.zjtuojing.utils.{ClickUtils, MyUtils}
+import com.alibaba.fastjson.JSON
+import com.zjtuojing.natflow.NatFlow.logger
+import com.zjtuojing.utils.{ClickUtils, JedisPool, MyUtils}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 import scalikejdbc.{ConnectionPool, DB, SQL}
 import scalikejdbc.config.DBs
 
 object LivenessRpt {
+
+  case class region(var rid1: String = "", var rid2: String = "", var rid3: String = "", var rid4: String = "")
+
   def main(args: Array[String]): Unit = {
     val properties = MyUtils.loadConf()
     val datetime = MyUtils.getTaskTime._3._2
@@ -18,10 +23,24 @@ object LivenessRpt {
 
     val conf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-//      .setMaster("local[*]")
+      //      .setMaster("local[*]")
       .set("spark.speculation", "false")
       .set("spark.locality.wait", "10")
       .set("spark.storage.memoryFraction", "0.3")
+
+    var maps = Map[String, region]()
+
+    try {
+      val jedisPool = JedisPool.getJedisPool()
+      val jedis = JedisPool.getJedisClient(jedisPool)
+      maps = jedis.hgetAll("nat:radius")
+        .values().toArray
+        .map(json => {
+          val jobj = JSON.parseObject(json.toString)
+          (jobj.getString("account"), region(jobj.getString("rid1"), jobj.getString("rid2"), jobj.getString("rid3"), jobj.getString("rid4")))
+        }).toMap
+    }
+
 
     //采用kryo序列化库
     conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
@@ -47,19 +66,22 @@ object LivenessRpt {
       .map(per => {
         val users = per
         val str = per.substring(1, users.length - 1).split(",")
-        if (str.size==2) (str(0),str(1).toInt)
-        else if (str.size==3) (str(0)+","+str(1),str(2).toInt)
-        else (str(0)+","+str(1)+","+str(2),str(3).toInt)
+        if (str.size == 2) (str(0), str(1).toInt)
+        else if (str.size == 3) (str(0) + "," + str(1), str(2).toInt)
+        else (str(0) + "," + str(1) + "," + str(2), str(3).toInt)
       })
       .reduceByKey(_ + _)
       .sortBy(-_._2)
-      .map(per => (per._1, per._2, new Timestamp(datetime * 1000)))
+      .map(per => {
+        val regions = maps.getOrElse(per._1, region())
+        (per._1, per._2, new Timestamp(datetime * 1000), regions.rid1, regions.rid2, regions.rid3, regions.rid4)
+      })
 
-//    value.foreach(println)
+    //    value.foreach(println)
 
     import spark.implicits._
 
-    val userDF = value.toDF("username", "resolver", "accesstime")
+    val userDF = value.toDF("username", "resolver", "accesstime", "rid1", "rid2", "rid3", "rid4")
 
     ClickUtils.clickhouseWrite(userDF, "nat_log.nat_liveness")
 

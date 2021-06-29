@@ -55,6 +55,10 @@ object NatFlow {
   hbaseConf.set("hbase.zookeeper.property.clientPort", "2181") //设置zookeeper连接端口，默认2181
   hbaseConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
 
+  // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
+  val jobConf = new JobConf(hbaseConf)
+  jobConf.setOutputFormat(classOf[TableOutputFormat])
+
 
   def main(args: Array[String]): Unit = {
 
@@ -338,12 +342,8 @@ object NatFlow {
         logger.error("写入异常")
     }
 
-    // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
-    val jobConf = new JobConf(hbaseConf)
-    jobConf.setOutputFormat(classOf[TableOutputFormat])
-
     userAnalyzeRDD
-      //        .coalesce(360)
+      .coalesce(360)
       .mapPartitions((per: Iterator[NATBean]) => {
         var res = List[(ImmutableBytesWritable, Put)]()
         while (per.hasNext) {
