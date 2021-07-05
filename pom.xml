@@ -204,6 +204,12 @@
             <groupId>com.github.housepower</groupId>
             <artifactId>clickhouse-native-jdbc-shaded</artifactId>
             <version>2.5.4</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>net.jpountz.lz4</groupId>
+                    <artifactId>lz4</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>

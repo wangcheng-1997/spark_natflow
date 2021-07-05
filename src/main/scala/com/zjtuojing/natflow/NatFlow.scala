@@ -342,29 +342,37 @@ object NatFlow {
         logger.error("写入异常")
     }
 
-    userAnalyzeRDD
-      .coalesce(360)
-      .mapPartitions((per: Iterator[NATBean]) => {
-        var res = List[(ImmutableBytesWritable, Put)]()
-        while (per.hasNext) {
-          val perline = per.next()
-          val rowkey = Bytes.toBytes(perline.rowkey)
-          val put = new Put(rowkey)
+    try {
 
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(perline.accesstime * 1000)))
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(perline.sourceIp))
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(perline.sourcePort))
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(perline.targetIp))
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(perline.targetPort))
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(perline.protocol))
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(perline.convertedIp))
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(perline.convertedPort))
-          put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(perline.username))
-          res.::=(new ImmutableBytesWritable, put)
-        }
-        res.iterator
-      })
-      .saveAsHadoopDataset(jobConf)
+      userAnalyzeRDD
+        .coalesce(720)
+        .mapPartitions((per: Iterator[NATBean]) => {
+          var res = List[(ImmutableBytesWritable, Put)]()
+          while (per.hasNext) {
+            val perline = per.next()
+            val rowkey = Bytes.toBytes(perline.rowkey)
+            val put = new Put(rowkey)
+
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(perline.accesstime * 1000)))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(perline.sourceIp))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(perline.sourcePort))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(perline.targetIp))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(perline.targetPort))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(perline.protocol))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(perline.convertedIp))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(perline.convertedPort))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(perline.username))
+            res.::=(new ImmutableBytesWritable, put)
+          }
+          res.iterator
+        })
+        .saveAsHadoopDataset(jobConf)
+
+    } catch {
+      case e: Exception =>
+        e.printStackTrace()
+        logger.error("写入异常")
+    }
 
     userAnalyzeRDD.unpersist()
     targetIpDetail.unpersist()
