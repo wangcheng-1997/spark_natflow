@@ -153,8 +153,6 @@ object NatFlow {
     // 用户信息广播变量
     val userMapsBC = sc.broadcast(userMaps)
 
-    //    val now = new SimpleDateFormat("yyyyMMddHHmm").format(time * 1000)
-
     // 1 主机设备IP解析
     val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
       .coalesce(720)
