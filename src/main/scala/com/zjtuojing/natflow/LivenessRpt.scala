@@ -80,9 +80,9 @@ object LivenessRpt {
         val regions = maps.getOrElse(per._1, region())
         (per._1, per._2, new Timestamp(datetime * 1000), regions.rid1, regions.rid2, regions.rid3, regions.rid4)
       })
-          .persist(StorageLevel.MEMORY_AND_DISK_SER)
+      .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
-    val online_users = value.map(_._1).collect()
+    val online_users = value.map(per => (per._1, "online")).collect().toMap
     val value1 = sc.broadcast(online_users)
 
     Class.forName("com.mysql.jdbc.Driver")
@@ -97,35 +97,46 @@ object LivenessRpt {
     prop.put("user", userName)
     prop.put("password", password)
 
+    val arr = ArrayBuffer[Int]()
+    for (i <- 0 until 100) {
+      arr.append(i)
+    }
+    val predicates = arr.map(i => {
+      s"SHA1(id)%100 = $i"
+    }).toArray
+
     val lost_users = spark.read
-      .jdbc("jdbc:mysql://30.254.234.21:3306/nat_log?characterEncoding=utf8&useSSL=false", "sys_wasu_user", prop)
+      .jdbc("jdbc:mysql://30.254.234.21:3306/nat_log?characterEncoding=utf8&useSSL=false", "sys_wasu_user", predicates, prop)
       .select("username", "rid1", "rid2", "rid3", "rid4")
       .rdd
       .map(per => {
         (per.get(0).toString, per.get(1).toString, per.get(2).toString, per.get(3).toString, per.get(4).toString)
       })
-      .filter(per => !value1.value.contains(per._1))
+      .filter(per => value1.value.getOrElse(per._1, "offline") == "offline")
       .coalesce(100).map(per => (per._1, 0, new Timestamp(datetime * 1000), per._2, per._3, per._4, per._5))
 
     import spark.implicits._
 
-        val onlineUserRegionDF = value.coalesce(100).toDF("username", "resolver", "accesstime", "rid1", "rid2", "rid3", "rid4")
-        ClickUtils.clickhouseWrite(onlineUserRegionDF, "nat_log.nat_liveness")
+    val onlineUserRegionDF = value.coalesce(100).toDF("username", "resolver", "accesstime", "rid1", "rid2", "rid3", "rid4")
+    ClickUtils.clickhouseWrite(onlineUserRegionDF, "nat_log.nat_liveness")
 
     val lostUserRegionArray = lost_users.collect().toList
     val listBuffer = new ListBuffer[List[(String, Int, Timestamp, String, String, String, String)]]
     val listSize = lostUserRegionArray.length / 500000
+
     for (i <- 0 to listSize) {
       if ((i + 1) * 500000 < lostUserRegionArray.length)
         listBuffer += lostUserRegionArray.slice(i * 500000, (i + 1) * 500000)
       else listBuffer += lostUserRegionArray.slice(i * 500000, lostUserRegionArray.length - 1)
     }
-    listBuffer.foreach(per => {
-      val frame = per.toDF("username", "resolver", "accesstime", "rid1", "rid2", "rid3", "rid4")
-      ClickUtils.clickhouseWrite(frame, "nat_log.nat_liveness")
-    })
 
-        getFlowCountDD(properties)
+    for (j <- listBuffer.indices){
+      val frame = listBuffer(j).toDF("username", "resolver", "accesstime", "rid1", "rid2", "rid3", "rid4")
+      ClickUtils.clickhouseWrite(frame, "nat_log.nat_liveness")
+      Thread.sleep(5000)
+    }
+
+    getFlowCountDD(properties)
   }
 
   def getFlowCountDD(properties: Properties) = {
