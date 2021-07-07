@@ -63,9 +63,9 @@ object JedisPoolSentine {
 
     val jedisPool = getJedisPool()
     val jedis = getJedisClient(jedisPool)
-    jedis.hgetAll("broadband:userinfo")
+    jedis.hgetAll("nat:radius_name")
       .values().toArray
-      .take(1).foreach(println(_))
+      .take(100).foreach(println(_))
 
 
     jedis.close()

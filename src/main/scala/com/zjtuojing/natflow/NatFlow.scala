@@ -6,7 +6,7 @@ import java.util.{Date, Properties}
 
 import com.alibaba.fastjson.JSON
 import com.zjtuojing.natflow.BeanClass.{NATBean, NATReportBean, SecondaryIndexBean}
-import com.zjtuojing.utils.{ClickUtils, JedisPool, MyUtils}
+import com.zjtuojing.utils.{ClickUtils, JedisPool, JedisPoolSentine, MyUtils}
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hbase.HBaseConfiguration
 import org.apache.hadoop.hbase.client.Put
@@ -141,8 +141,8 @@ object NatFlow {
     var userMaps: Map[String, String] = null
 
     try {
-      val jedisPool = JedisPool.getJedisPool()
-      val jedis = JedisPool.getJedisClient(jedisPool)
+      val jedisPool = JedisPoolSentine.getJedisPool()
+      val jedis = JedisPoolSentine.getJedisClient(jedisPool)
       userMaps = getUserName(jedis)
       jedis.close()
       jedisPool.destroy()

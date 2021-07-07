@@ -4,11 +4,9 @@ import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Properties
 
-import com.alibaba.fastjson.JSON
-import com.zjtuojing.utils.{ClickUtils, JedisPool, MyUtils}
+import com.zjtuojing.utils.{ClickUtils, MyUtils}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.storage.StorageLevel
 import scalikejdbc.config.DBs
 import scalikejdbc.{ConnectionPool, DB, SQL}
 
@@ -25,26 +23,10 @@ object LivenessRpt {
 
     val conf = new SparkConf()
       .setAppName(this.getClass.getSimpleName)
-//      .setMaster("local[*]")
+      //      .setMaster("local[*]")
       .set("spark.speculation", "false")
       .set("spark.locality.wait", "10")
       .set("spark.storage.memoryFraction", "0.3")
-
-    var maps = Map[String, region]()
-
-    try {
-      val jedisPool = JedisPool.getJedisPool()
-      val jedis = JedisPool.getJedisClient(jedisPool)
-      maps = jedis.hgetAll("nat:radius")
-        .values().toArray
-        .map(json => {
-          val jobj = JSON.parseObject(json.toString)
-          (jobj.getString("account"), region(jobj.getString("rid1"), jobj.getString("rid2"), jobj.getString("rid3"), jobj.getString("rid4")))
-        }).toMap
-    } catch {
-      case e: Exception => println("连接失败")
-    }
-
 
     //采用kryo序列化库
     conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
@@ -75,15 +57,12 @@ object LivenessRpt {
         else (str(0) + "," + str(1) + "," + str(2), str(3).toInt)
       })
       .reduceByKey(_ + _)
-      .sortBy(-_._2)
       .map(per => {
-        val regions = maps.getOrElse(per._1, region())
-        (per._1, per._2, new Timestamp(datetime * 1000), regions.rid1, regions.rid2, regions.rid3, regions.rid4)
+        (per._1, per._2)
       })
-      .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
-    val online_users = value.map(per => (per._1, "online")).collect().toMap
-    val value1 = sc.broadcast(online_users)
+    val online_users = value.collect().toMap
+    val online_users_broad = sc.broadcast(online_users)
 
     Class.forName("com.mysql.jdbc.Driver")
 
@@ -105,33 +84,34 @@ object LivenessRpt {
       s"SHA1(id)%100 = $i"
     }).toArray
 
-    val lost_users = spark.read
+    val users_regions = spark.read
       .jdbc("jdbc:mysql://30.254.234.21:3306/nat_log?characterEncoding=utf8&useSSL=false", "sys_wasu_user", predicates, prop)
       .select("username", "rid1", "rid2", "rid3", "rid4")
       .rdd
       .map(per => {
-        (per.get(0).toString, per.get(1).toString, per.get(2).toString, per.get(3).toString, per.get(4).toString)
+        val username = per.get(0).toString
+        val rid1 = per.get(1).toString
+        val rid2 = per.get(2).toString
+        val rid3 = per.get(3).toString
+        val rid4 = per.get(4).toString
+        val resolver = online_users_broad.value.getOrElse(username, 0)
+        (username, resolver, new Timestamp(datetime * 1000), rid1, rid2, rid3, rid4)
       })
-      .filter(per => value1.value.getOrElse(per._1, "offline") == "offline")
-      .coalesce(100).map(per => (per._1, 0, new Timestamp(datetime * 1000), per._2, per._3, per._4, per._5))
 
     import spark.implicits._
 
-    val onlineUserRegionDF = value.coalesce(100).toDF("username", "resolver", "accesstime", "rid1", "rid2", "rid3", "rid4")
-    ClickUtils.clickhouseWrite(onlineUserRegionDF, "nat_log.nat_liveness")
+    val users_regionsArray = users_regions.collect().toList
+    val users_regionsBuffer = new ListBuffer[List[(String, Int, Timestamp, String, String, String, String)]]
+    val users_regionsBufferSize = users_regionsArray.length / 500000
 
-    val lostUserRegionArray = lost_users.collect().toList
-    val listBuffer = new ListBuffer[List[(String, Int, Timestamp, String, String, String, String)]]
-    val listSize = lostUserRegionArray.length / 500000
-
-    for (i <- 0 to listSize) {
-      if ((i + 1) * 500000 < lostUserRegionArray.length)
-        listBuffer += lostUserRegionArray.slice(i * 500000, (i + 1) * 500000)
-      else listBuffer += lostUserRegionArray.slice(i * 500000, lostUserRegionArray.length - 1)
+    for (i <- 0 to users_regionsBufferSize) {
+      if ((i + 1) * 500000 < users_regionsArray.length)
+        users_regionsBuffer += users_regionsArray.slice(i * 500000, (i + 1) * 500000)
+      else users_regionsBuffer += users_regionsArray.slice(i * 500000, users_regionsArray.length - 1)
     }
 
-    for (j <- listBuffer.indices){
-      val frame = listBuffer(j).toDF("username", "resolver", "accesstime", "rid1", "rid2", "rid3", "rid4")
+    for (j <- users_regionsBuffer.indices) {
+      val frame = users_regionsBuffer(j).toDF("username", "resolver", "accesstime", "rid1", "rid2", "rid3", "rid4")
       ClickUtils.clickhouseWrite(frame, "nat_log.nat_liveness")
       Thread.sleep(5000)
     }
