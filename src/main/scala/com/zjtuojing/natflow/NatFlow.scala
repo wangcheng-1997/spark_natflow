@@ -47,6 +47,16 @@ object NatFlow {
 
   DBs.setupAll()
 
+  var jedis: Jedis = null
+  try {
+    val jedisPool = JedisPoolSentine.getJedisPool()
+    jedis = JedisPoolSentine.getJedisClient(jedisPool)
+  } catch {
+    case e:Exception => logger.warn("redis连接异常")
+  }
+
+
+
   val tableName = "syslog"
 
   //     bulkload
@@ -141,11 +151,7 @@ object NatFlow {
     var userMaps: Map[String, String] = null
 
     try {
-      val jedisPool = JedisPoolSentine.getJedisPool()
-      val jedis = JedisPoolSentine.getJedisClient(jedisPool)
       userMaps = getUserName(jedis)
-      jedis.close()
-      jedisPool.destroy()
     } catch {
       case _: Exception => logger.error("redis连接异常")
     }
@@ -207,7 +213,8 @@ object NatFlow {
             logger.error(per, e.getMessage)
         }
 
-        val username = userMapsBC.value.getOrElse(sourceIp, "UnKnown")
+        val username = if(userMapsBC != null )userMapsBC.value.getOrElse(sourceIp, "UnKnown")
+        else "UnKnown"
 
         val rowkey = MyUtils.MD5Encode(convertedIp + "_" + convertedPort).substring(8, 24) + "_" + (Long.MaxValue - (date * 1000))
 
