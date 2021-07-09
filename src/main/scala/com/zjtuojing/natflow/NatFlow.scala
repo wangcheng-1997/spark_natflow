@@ -52,9 +52,8 @@ object NatFlow {
     val jedisPool = JedisPoolSentine.getJedisPool()
     jedis = JedisPoolSentine.getJedisClient(jedisPool)
   } catch {
-    case e:Exception => logger.warn("redis连接异常")
+    case e: Exception => logger.warn("redis连接异常")
   }
-
 
 
   val tableName = "syslog"
@@ -133,7 +132,7 @@ object NatFlow {
         }
       } catch {
         case e: Exception =>
-          logger.error(s"FileException $path", e)
+          logger.warn(s"FileException $path", e)
       }
     }
 
@@ -153,7 +152,7 @@ object NatFlow {
     try {
       userMaps = getUserName(jedis)
     } catch {
-      case _: Exception => logger.error("redis连接异常")
+      case _: Exception => logger.warn("redis连接异常")
     }
 
     // 用户信息广播变量
@@ -196,31 +195,37 @@ object NatFlow {
             convertedIp = convert(0)
             convertedPort = convert(1)
           } else {
-            val msgs = per.split("\\s+")
-            val information = msgs(4).split(",")
-            val accesstime = msgs(1) + " " + msgs(2)
-            date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(accesstime).getTime / 1000
-            protocol = information(1).split("=")(1)
-            sourceIp = information(2).split("=")(1)
-            targetIp = information(3).split("=")(1)
-            sourcePort = information(4).split("=")(1)
-            targetPort = information(5).split("=")(1)
-            convertedIp = information(6).split("=")(1)
-            convertedPort = information(7).split("=")(1)
+            try {
+              val msgs = per.split("\\s+")
+              val accesstime = msgs(1) + " " + msgs(2)
+              date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(accesstime).getTime / 1000
+              val information = msgs(4).split(",")
+              protocol = information(1).split("=")(1)
+              if (msgs.size == 5) {
+                sourceIp = information(2).split("=")(1)
+                targetIp = information(3).split("=")(1)
+                sourcePort = information(4).split("=")(1)
+                targetPort = information(5).split("=")(1)
+                convertedIp = information(6).split("=")(1)
+                convertedPort = information(7).split("=")(1)
+              }
+            }catch {
+              case e:Exception => logger.warn(per)
+            }
           }
         } catch {
           case e: Exception =>
-            logger.error(per, e.getMessage)
+            logger.warn(per, e.getMessage)
         }
 
-        val username = if(userMapsBC != null )userMapsBC.value.getOrElse(sourceIp, "UnKnown")
+        val username = if (userMapsBC != null) userMapsBC.value.getOrElse(sourceIp, "UnKnown")
         else "UnKnown"
 
         val rowkey = MyUtils.MD5Encode(convertedIp + "_" + convertedPort).substring(8, 24) + "_" + (Long.MaxValue - (date * 1000))
 
         NATBean(date, sourceIp, sourcePort, targetIp, targetPort, protocol, convertedIp, convertedPort, username, rowkey)
 
-      }).persist(StorageLevel.MEMORY_AND_DISK_SER)
+      }).filter(_.sourceIp != "0.0.0.0").persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     userMapsBC.unpersist()
 
@@ -240,7 +245,7 @@ object NatFlow {
         try {
           maps = util.IpSearch.getRegionByIp(targetIp)
         } catch {
-          case _: Exception => logger.error(s"IP:{$targetIp}解析异常或无法解析")
+          case _: Exception => logger.warn(s"IP:{$targetIp}解析异常或无法解析")
         }
         if (!maps.isEmpty) {
           operate = maps.get("运营").toString
@@ -320,7 +325,7 @@ object NatFlow {
     } catch {
       case e: Exception =>
         e.printStackTrace()
-        logger.error("写入异常")
+        logger.warn("写入异常")
     }
 
     //    val rowKeys = userAnalyzeRDD.map(per => {
@@ -344,7 +349,7 @@ object NatFlow {
     } catch {
       case e: Exception =>
         e.printStackTrace()
-        logger.error("写入异常")
+        logger.warn("写入异常")
     }
 
     try {
@@ -376,7 +381,7 @@ object NatFlow {
     } catch {
       case e: Exception =>
         e.printStackTrace()
-        logger.error("写入异常")
+        logger.warn("写入异常")
     }
 
     userAnalyzeRDD.unpersist()
@@ -399,7 +404,7 @@ object NatFlow {
     } catch {
       case e: Exception =>
         maps = maps
-        logger.error("getUserName", e)
+        logger.warn("getUserName", e)
       //        e.printStackTrace()
     }
     maps
