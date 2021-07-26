@@ -24,6 +24,7 @@ import scalikejdbc.config.DBs
 import scalikejdbc.{ConnectionPool, DB, SQL}
 
 import scala.collection.mutable.ListBuffer
+import scala.util.Random
 
 /**
  * ClassName NatFlow
@@ -46,15 +47,6 @@ object NatFlow {
   ConnectionPool.singleton(url, userName, password)
 
   DBs.setupAll()
-
-  var jedis: Jedis = null
-  try {
-    val jedisPool = JedisPoolSentine.getJedisPool()
-    jedis = JedisPoolSentine.getJedisClient(jedisPool)
-  } catch {
-    case e: Exception => logger.warn("redis连接异常")
-  }
-
 
   val tableName = "syslog"
 
@@ -149,10 +141,21 @@ object NatFlow {
 
     var userMaps: Map[String, String] = null
 
+    var jedis: Jedis = null
     try {
-      userMaps = getUserName(jedis)
+      val jedisPool = JedisPoolSentine.getJedisPool()
+      jedis = JedisPoolSentine.getJedisClient(jedisPool)
     } catch {
-      case _: Exception => logger.warn("redis连接异常")
+      case e: Exception => logger.warn("redis连接异常")
+      case e: java.lang.Exception => logger.warn("redis连接异常")
+    }
+
+    if (jedis != null) {
+      try {
+        userMaps = getUserName(jedis)
+      } catch {
+        case _: Exception => logger.warn("redis连接异常")
+      }
     }
 
     // 用户信息广播变量
@@ -162,9 +165,14 @@ object NatFlow {
     val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
       .coalesce(720)
       .map(per => {
-        val hostIp = per.split(" ")(0)
-        ((batchTime - 300 * 1000, hostIp.substring(0, hostIp.length - 5)), 1)
-      }).reduceByKey(_ + _).map(per => NATReportBean("hostIP", new Timestamp(per._1._1), per._1._2, per._2))
+        val hostIpList = per.split(" ")(0).split("\\.")
+        val hostIp = hostIpList(0) + "." + hostIpList(1) + "." + hostIpList(2) + "." + hostIpList(3)
+        ((batchTime - 300 * 1000, hostIp,Random.nextInt(360)), 1)
+      })
+      .reduceByKey(_ + _)
+      .map(per => ((per._1._1, per._1._2), per._2))
+      .reduceByKey(_ + _)
+      .map(per => NATReportBean("hostIP", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2 日志Msg解析
     val msgRDD = baseRDD.filter(_.startsWith("Msg"))
@@ -209,8 +217,8 @@ object NatFlow {
                 convertedIp = information(6).split("=")(1)
                 convertedPort = information(7).split("=")(1)
               }
-            }catch {
-              case e:Exception => logger.warn(per)
+            } catch {
+              case e: Exception => logger.warn(per)
             }
           }
         } catch {
@@ -230,7 +238,9 @@ object NatFlow {
     userMapsBC.unpersist()
 
     // 2.1 目标IP维度聚合
-    val targetIpDetail = msgRDD.map(per => ((batchTime - 300 * 1000, per.targetIp), 1L))
+    val targetIpDetail = msgRDD.map(per => ((batchTime - 300 * 1000, per.targetIp, Random.nextInt(360)), 1L))
+      .reduceByKey(_ + _)
+      .map(per => ((per._1._1, per._1._2), per._2))
       .reduceByKey(_ + _)
       .map((per: ((Long, String), Long)) => {
         val accesstime = per._1._1
@@ -276,18 +286,25 @@ object NatFlow {
       .map(per => NATReportBean("city", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2.5 宽带账号维度聚合
-    val username = msgRDD.map(per => ((batchTime - 300 * 1000, per.username), 1))
+    val username = msgRDD.map(per => ((batchTime - 300 * 1000, per.username, Random.nextInt(360)), 1))
+      .reduceByKey(_ + _)
+      .map(per => ((per._1._1, per._1._2), per._2))
       .reduceByKey(_ + _)
       .sortBy(-_._2)
       .filter(_._1._2 != "UnKnown")
+      .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
-    username.coalesce(36).map(per => (per._1._2, per._2)).saveAsTextFile(s"/nat_user/${new SimpleDateFormat("yyyyMMdd/HH/mm").format(batchTime - 300 * 1000)}")
+    username
+      .map(per => (per._1._2, per._2))
+      .saveAsTextFile(s"/nat_user/${new SimpleDateFormat("yyyyMMdd/HH/mm").format(batchTime - 300 * 1000)}")
 
     val usernameTop = username.take(100)
       .map(per => NATReportBean("username", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2.6 源ip维度聚合
-    val sourceIp = msgRDD.map(per => ((batchTime - 300 * 1000, per.sourceIp), 1))
+    val sourceIp = msgRDD.map(per => ((batchTime - 300 * 1000, per.sourceIp, Random.nextInt(360)), 1))
+      .reduceByKey(_ + _)
+      .map(per => ((per._1._1, per._1._2), per._2))
       .reduceByKey(_ + _)
       .sortBy(-_._2)
       .take(100)
@@ -302,7 +319,9 @@ object NatFlow {
     val sourceIpDF = spark.createDataFrame(sourceIp).coalesce(100)
 
     val userAnalyzeRDD = msgRDD
-      .map(per => (per.rowkey, per)).reduceByKey((x, y) => x).map(_._2)
+      .map(per => (per.rowkey, per))
+      .reduceByKey((x, y) => x)
+      .map(_._2)
       //      .filter(_.username != "UnKnown")
       .coalesce(720)
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
@@ -342,10 +361,6 @@ object NatFlow {
       ClickUtils.clickhouseWrite(hostIPDF, "nat_log.nat_report")
       ClickUtils.clickhouseWrite(usernameDF, "nat_log.nat_report")
       ClickUtils.clickhouseWrite(sourceIpDF, "nat_log.nat_report")
-
-      //      // TODO clickhouse实现hbase二级索引
-      //      ClickUtils.clickhouseWrite(rowKeysDF, "nat_log.nat_rowKey")
-
     } catch {
       case e: Exception =>
         e.printStackTrace()
@@ -384,6 +399,7 @@ object NatFlow {
         logger.warn("写入异常")
     }
 
+    username.unpersist()
     userAnalyzeRDD.unpersist()
     targetIpDetail.unpersist()
     msgRDD.unpersist()
