@@ -135,8 +135,9 @@ object NatFlow {
 
     val natPath = paths.mkString(",")
 
-    val baseRDD = sc.textFile(natPath, 720)
+    val baseRDD = sc.textFile(natPath)
       .map(_.trim)
+      .repartition(800)
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     var userMaps: Map[String, String] = null
@@ -163,7 +164,7 @@ object NatFlow {
 
     // 1 主机设备IP解析
     val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
-      .coalesce(720)
+      .coalesce(800)
       .map(per => {
         val hostIpList = per.split(" ")(0).split("\\.")
         val hostIp = hostIpList(0) + "." + hostIpList(1) + "." + hostIpList(2) + "." + hostIpList(3)
@@ -176,7 +177,7 @@ object NatFlow {
 
     // 2 日志Msg解析
     val msgRDD = baseRDD.filter(_.startsWith("Msg"))
-      .coalesce(720)
+      .coalesce(800)
       .map(per => {
         var date = 0L
         var protocol = ""
@@ -318,8 +319,10 @@ object NatFlow {
     val usernameDF = spark.createDataFrame(usernameTop).coalesce(100)
     val sourceIpDF = spark.createDataFrame(sourceIp).coalesce(100)
 
-    val userAnalyzeRDD = msgRDD.coalesce(720)
-      .map(per => (per.rowkey, per))
+    val userAnalyzeRDD = msgRDD.coalesce(800)
+      .map(per => ((per.rowkey,Random.nextInt(360)), per))
+      .reduceByKey((x, y) => x)
+      .map(per => (per._1._1,per._2))
       .reduceByKey((x, y) => x)
       .map(_._2)
       //      .filter(_.username != "UnKnown")
@@ -369,7 +372,7 @@ object NatFlow {
     try {
 
       userAnalyzeRDD
-        .coalesce(720)
+        .coalesce(800)
         .mapPartitions((per: Iterator[NATBean]) => {
           var res = List[(ImmutableBytesWritable, Put)]()
           while (per.hasNext) {
