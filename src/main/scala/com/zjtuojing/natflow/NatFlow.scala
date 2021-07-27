@@ -318,12 +318,11 @@ object NatFlow {
     val usernameDF = spark.createDataFrame(usernameTop).coalesce(100)
     val sourceIpDF = spark.createDataFrame(sourceIp).coalesce(100)
 
-    val userAnalyzeRDD = msgRDD
+    val userAnalyzeRDD = msgRDD.coalesce(720)
       .map(per => (per.rowkey, per))
       .reduceByKey((x, y) => x)
       .map(_._2)
       //      .filter(_.username != "UnKnown")
-      .coalesce(720)
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     try {
