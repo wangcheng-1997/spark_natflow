@@ -6,14 +6,17 @@ import java.util.{Date, Properties}
 
 import com.alibaba.fastjson.JSON
 import com.zjtuojing.natflow.BeanClass.{NATBean, NATReportBean}
-import com.zjtuojing.utils.{ClickUtils, JedisPool, JedisPoolSentine, MyUtils}
+import com.zjtuojing.utils.{ClickUtils, JedisPoolSentine, MyUtils}
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.hbase.HBaseConfiguration
-import org.apache.hadoop.hbase.client.Put
+import org.apache.hadoop.hbase.{HBaseConfiguration, KeyValue, TableName}
+import org.apache.hadoop.hbase.client.{ConnectionFactory, HTable, Put, Table}
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapred.TableOutputFormat
+import org.apache.hadoop.hbase.mapreduce.{HFileOutputFormat2, LoadIncrementalHFiles}
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.mapred.JobConf
+import org.apache.hadoop.mapreduce.Job
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext}
@@ -27,10 +30,10 @@ import scala.collection.mutable.ListBuffer
 import scala.util.Random
 
 /**
- * ClassName NatFlow
+ * ClassName NatFlowDelay
  * Date 2020/8/12 9:16
  */
-object NatFlow {
+object BulkLoadNatFlow {
 
   val logger: Logger = LoggerFactory.getLogger(this.getClass)
   val properties: Properties = MyUtils.loadConf()
@@ -61,13 +64,15 @@ object NatFlow {
 
   //     bulkload
   val hbaseConf = HBaseConfiguration.create()
-  hbaseConf.set("hbase.zookeeper.quorum", properties.getProperty("hbase.zookeeper.quorum")) //设置zooKeeper集群地址，也可以通过将hbase-site.xml导入classpath，但是建议在程序里这样设置
-  hbaseConf.set("hbase.zookeeper.property.clientPort", "2181") //设置zookeeper连接端口，默认2181
-  hbaseConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
+  hbaseConf.set("hbase.zookeeper.property.clientPort", "2181")
+  hbaseConf.set("hbase.zookeeper.quorum", "30.254.234.31,30.254.234.33,30.254.234.35,30.254.234.36,30.254.234.38")
+  hbaseConf.set("zookeeper.znode.parent", "/hbase")
+  hbaseConf.set("hbase.client.retries.number", "3")
+  hbaseConf.set("hbase.rpc.timeout", "200000")
+  hbaseConf.set("hbase.client.operation.timeout", "300000")
+  hbaseConf.set("hbase.client.scanner.timeout.period", "100000")
 
-  // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
-  val jobConf = new JobConf(hbaseConf)
-  jobConf.setOutputFormat(classOf[TableOutputFormat])
+
 
 
   def main(args: Array[String]): Unit = {
@@ -367,29 +372,77 @@ object NatFlow {
 
     try {
 
-      userAnalyzeRDD
+      val writeRdd = userAnalyzeRDD
         .coalesce(partitions)
-        .mapPartitions((per: Iterator[NATBean]) => {
-          var res = List[(ImmutableBytesWritable, Put)]()
-          while (per.hasNext) {
-            val perline = per.next()
-            val rowkey = Bytes.toBytes(perline.rowkey)
-            val put = new Put(rowkey)
-
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(perline.accesstime * 1000)))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(perline.sourceIp))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(perline.sourcePort))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(perline.targetIp))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(perline.targetPort))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(perline.protocol))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(perline.convertedIp))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(perline.convertedPort))
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(perline.username))
-            res.::=(new ImmutableBytesWritable, put)
-          }
-          res.iterator
+        .map((perline: NATBean) => {
+            val rowKey = perline.rowkey
+            List(
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(perline.accesstime * 1000)))),
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(perline.sourceIp))),
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(perline.sourcePort))),
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(perline.targetIp))),
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("targetPort"), Bytes.toBytes(perline.targetPort))),
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("protocol"), Bytes.toBytes(perline.protocol))),
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("convertedIp"), Bytes.toBytes(perline.convertedIp))),
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("convertedPort"), Bytes.toBytes(perline.convertedPort))),
+//              (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes("username"), Bytes.toBytes(perline.username)))
+            (rowKey,"accesstime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(perline.accesstime * 1000)),
+            (rowKey,"sourceIp", perline.sourceIp),
+            (rowKey,"sourcePort", perline.sourcePort),
+            (rowKey,"targetIp", perline.targetIp),
+            (rowKey,"targetPort", perline.targetPort),
+            (rowKey,"protocol", perline.protocol),
+            (rowKey,"convertedIp", perline.convertedIp),
+            (rowKey,"convertedPort", perline.convertedPort),
+            (rowKey,"username", perline.username)
+            )
+        }).flatMap(per => per)
+        .sortBy(per => per._1+"nat"+per._2)
+        .map(per => {
+          val rowKey = per._1
+          (new ImmutableBytesWritable(Bytes.toBytes(rowKey)), new KeyValue(Bytes.toBytes(rowKey), Bytes.toBytes("nat"), Bytes.toBytes(per._2), Bytes.toBytes(per._3)))
         })
-        .saveAsHadoopDataset(jobConf)
+
+
+      //生成的HFile的临时保存路径
+      val stagingFolder = "hdfs://30.254.234.33:8020/hfile_tmp"
+      //将日志保存到指定目录
+      writeRdd.saveAsNewAPIHadoopFile(stagingFolder,
+        classOf[ImmutableBytesWritable],
+        classOf[KeyValue],
+        classOf[HFileOutputFormat2],
+        hbaseConf)
+      //此处运行完成之后,在stagingFolder会有我们生成的Hfile文件
+
+      //开始即那个HFile导入到Hbase,此处都是hbase的api操作
+      val load = new LoadIncrementalHFiles(hbaseConf)
+      //hbase的表名
+      val tableName = "syslog"
+      //创建hbase的链接,利用默认的配置文件,实际上读取的hbase的master地址
+      val conn = ConnectionFactory.createConnection(hbaseConf)
+      //根据表名获取表
+      val table: Table = conn.getTable(TableName.valueOf(tableName))
+      try {
+        //创建一个hadoop的mapreduce的job
+        val job = Job.getInstance(hbaseConf)
+        //设置job名称
+        job.setJobName("DumpFile")
+        //此处最重要,需要设置文件输出的key,因为我们要生成HFil,所以outkey要用ImmutableBytesWritable
+        job.setMapOutputKeyClass(classOf[ImmutableBytesWritable])
+        //输出文件的内容KeyValue
+        job.setMapOutputValueClass(classOf[KeyValue])
+        //配置HFileOutputFormat2的信息
+        HFileOutputFormat2.configureIncrementalLoadMap(job, table)
+        //开始导入
+        val start = System.currentTimeMillis()
+        load.doBulkLoad(new Path(stagingFolder), table.asInstanceOf[HTable])
+        val end = System.currentTimeMillis()
+        println("用时：" + (end - start) + "毫秒！")
+        hdfs.delete(new Path("/hfile_tmp"))
+      } finally {
+        table.close()
+        conn.close()
+      }
 
     } catch {
       case e: Exception =>

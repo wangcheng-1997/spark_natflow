@@ -6,15 +6,18 @@ import java.util.{Date, Properties}
 
 import com.alibaba.fastjson.JSON
 import com.zjtuojing.natflow.BeanClass.{NATBean, NATReportBean}
-import com.zjtuojing.utils.{ClickUtils, JedisPool, JedisPoolSentine, MyUtils}
+import com.zjtuojing.utils.{ClickUtils, JedisPoolSentine, MyUtils}
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.hbase.HBaseConfiguration
-import org.apache.hadoop.hbase.client.Put
+import org.apache.hadoop.hbase.client.{ConnectionFactory, HTable, Put, Table}
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapred.TableOutputFormat
+import org.apache.hadoop.hbase.mapreduce.{HFileOutputFormat2, LoadIncrementalHFiles}
 import org.apache.hadoop.hbase.util.Bytes
+import org.apache.hadoop.hbase.{HBaseConfiguration, KeyValue, TableName}
 import org.apache.hadoop.mapred.JobConf
-import org.apache.spark.sql.SparkSession
+import org.apache.hadoop.mapreduce.Job
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{SQLContext, SparkSession}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
@@ -27,10 +30,10 @@ import scala.collection.mutable.ListBuffer
 import scala.util.Random
 
 /**
- * ClassName NatFlow
+ * ClassName NatFlowDelay
  * Date 2020/8/12 9:16
  */
-object NatFlow {
+object DelayNatFlow {
 
   val logger: Logger = LoggerFactory.getLogger(this.getClass)
   val properties: Properties = MyUtils.loadConf()
@@ -113,39 +116,67 @@ object NatFlow {
 
   def call(sc: SparkContext, spark: SparkSession, batchTime: Long): Any = {
     val paths = new ListBuffer[String]()
-    var time = 0L
+
     //多取前一个文件， 部分记录在前一个文件中
     //目录数据样本 hdfs://30.250.60.7/dns_log/2019/12/25/1621_1577262060
     val hdfs = org.apache.hadoop.fs.FileSystem.get(sc.hadoopConfiguration)
-    for (w <- 10 * 30 until 0 by -60) {
-      time = (batchTime - w * 1000L) / 1000
-      val path = s"/nat_log/${new SimpleDateFormat("yyyyMMdd/HH/mm").format(time * 1000)}"
 
-      try {
-        if (hdfs.exists(new Path(path))) {
-          //        if (w >= 580) {
-          paths += path
+    val date = new SimpleDateFormat("yyyyMMdd").format(batchTime - 300000)
+
+    //目录数据样本 hdfs://30.250.60.7/dns_log/2019/12/25/1621_1577262060
+    val files = hdfs.listFiles(new Path(s"/nat_log/$date/"), true)
+    var files_old_path: Array[Path] = null
+    var files_size = 0L
+
+    val limit = if (getDataSpeedLimit(spark).length == 1) {
+      getDataSpeedLimit(spark)(0)
+    }
+    else {
+      40
+    }
+
+    try {
+      files_old_path = jedis.hkeys("nat:nat_files_delay").toArray().map(per => new Path(per.toString))
+      val files_old = hdfs.listStatus(files_old_path).toList.iterator
+      while (files_old.hasNext && (files_size / 1024 <= limit)) {
+        val file = files_old.next()
+        val filePath = file.getPath
+        val file_size = file.getLen / 1024 / 1024
+        paths.append(filePath.toString)
+        files_size = files_size + file_size
+      }
+      jedis.del("nat:nat_files_delay")
+    } catch {
+      case e: Exception => logger.error("无延迟数据")
+    }
+
+    while (files.hasNext) {
+      val file = files.next()
+      val accessTime = file.getAccessTime
+      if (accessTime >= batchTime - 300000 && accessTime < batchTime) {
+        if (files_size / 1024 <= limit.toInt) {
+          val filePath = file.getPath
+          val file_size = file.getLen / 1024 / 1024
+          paths.append(filePath.toString)
+          files_size = files_size + file_size
         } else {
-          logger.info(s"file not exists $path")
+          val file = files.next()
+          val filePath = file.getPath
+          val file_size = file.getLen / 1024 / 1024
+          jedis.hset("nat:nat_files_delay", filePath.toString, file_size.toString)
         }
-      } catch {
-        case e: Exception =>
-          logger.warn(s"FileException $path", e)
+      } else {
+        1 == 1
       }
     }
 
-    if (paths.isEmpty) {
-      logger.info("paths size is  0,  empty ..... return ")
-      return
-    }
+    logger.info("读取路径:" + paths.mkString(","))
 
-    val natPath = paths.mkString(",")
+    val natPath = paths.mkString(",").replaceAll("hdfs://nns", "")
 
     val baseRDD = sc.textFile(natPath)
       .map(_.trim)
       .persist(StorageLevel.MEMORY_AND_DISK_SER)
-
-    val partitions = baseRDD.getNumPartitions
 
     var userMaps: Map[String, String] = null
 
@@ -162,11 +193,11 @@ object NatFlow {
 
     // 1 主机设备IP解析
     val hostIpRDD = baseRDD.filter(_.matches("[0-9]{2}\\.+.*"))
-      .coalesce(partitions)
+      .coalesce(800)
       .map(per => {
         val hostIpList = per.split(" ")(0).split("\\.")
         val hostIp = hostIpList(0) + "." + hostIpList(1) + "." + hostIpList(2) + "." + hostIpList(3)
-        ((batchTime - 300 * 1000, hostIp,Random.nextInt(100)), 1)
+        ((batchTime - 300 * 1000, hostIp, Random.nextInt(100)), 1)
       })
       .reduceByKey(_ + _)
       .map(per => ((per._1._1, per._1._2), per._2))
@@ -175,7 +206,7 @@ object NatFlow {
 
     // 2 日志Msg解析
     val msgRDD = baseRDD.filter(_.startsWith("Msg"))
-      .coalesce(partitions)
+      .repartition(800)
       .map(per => {
         var date = 0L
         var protocol = ""
@@ -317,7 +348,7 @@ object NatFlow {
     val usernameDF = spark.createDataFrame(usernameTop).coalesce(100)
     val sourceIpDF = spark.createDataFrame(sourceIp).coalesce(100)
 
-    val userAnalyzeRDD = msgRDD.coalesce(partitions)
+    val userAnalyzeRDD = msgRDD.coalesce(800)
       .map(per => (per.rowkey, per))
       .reduceByKey((x, y) => x)
       .map(_._2)
@@ -345,11 +376,6 @@ object NatFlow {
         logger.warn("写入异常")
     }
 
-    //    val rowKeys = userAnalyzeRDD.map(per => {
-    //      SecondaryIndexBean(new Timestamp(per.accesstime * 1000), MyUtils.MD5Encode(per.targetIp + per.targetPort + per.convertedIp + per.convertedPort).substring(8, 24), per.rowkey)
-    //    })
-    //    val rowKeysDF = spark.createDataFrame(rowKeys).coalesce(100)
-
     try {
       //  TODO  维度聚合报表数据写入clickhouse
       ClickUtils.clickhouseWrite(provinceDF, "nat_log.nat_report")
@@ -368,7 +394,7 @@ object NatFlow {
     try {
 
       userAnalyzeRDD
-        .coalesce(partitions)
+        .coalesce(800)
         .mapPartitions((per: Iterator[NATBean]) => {
           var res = List[(ImmutableBytesWritable, Put)]()
           while (per.hasNext) {
@@ -422,6 +448,17 @@ object NatFlow {
       //        e.printStackTrace()
     }
     maps
+  }
+
+  def getDataSpeedLimit(spark: SparkSession): Array[Int] = {
+    //导入隐式转换
+    import spark.implicits._
+    val limit = Utils.ReadMysql(spark, "sys_cluster_set")
+      .map(row => {
+        val limit = row.getAs[Int]("performance")
+        limit
+      }).rdd.collect()
+    limit
   }
 
 }
