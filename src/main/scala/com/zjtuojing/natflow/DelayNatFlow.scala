@@ -6,6 +6,7 @@ import java.util.{Date, Properties}
 
 import com.alibaba.fastjson.JSON
 import com.zjtuojing.natflow.BeanClass.{NATBean, NATReportBean}
+import com.zjtuojing.utils.HBaseUtils.hexSplit
 import com.zjtuojing.utils.{ClickUtils, JedisPoolSentine, MyUtils}
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hbase.client.{ConnectionFactory, HTable, Put, Table}
@@ -59,19 +60,6 @@ object DelayNatFlow {
     case e: Exception => logger.warn("redis连接异常")
     case e: java.lang.Exception => logger.warn("redis连接异常")
   }
-
-  val tableName = "syslog"
-
-  //     bulkload
-  val hbaseConf = HBaseConfiguration.create()
-  hbaseConf.set("hbase.zookeeper.quorum", properties.getProperty("hbase.zookeeper.quorum")) //设置zooKeeper集群地址，也可以通过将hbase-site.xml导入classpath，但是建议在程序里这样设置
-  hbaseConf.set("hbase.zookeeper.property.clientPort", "2181") //设置zookeeper连接端口，默认2181
-  hbaseConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
-
-  // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
-  val jobConf = new JobConf(hbaseConf)
-  jobConf.setOutputFormat(classOf[TableOutputFormat])
-
 
   def main(args: Array[String]): Unit = {
 
@@ -392,7 +380,28 @@ object DelayNatFlow {
     }
 
     try {
+      val tableName = "syslog"+date
 
+      //     bulkload
+      val hbaseConf = HBaseConfiguration.create()
+      hbaseConf.set("hbase.zookeeper.quorum", properties.getProperty("hbase.zookeeper.quorum")) //设置zooKeeper集群地址，也可以通过将hbase-site.xml导入classpath，但是建议在程序里这样设置
+      hbaseConf.set("hbase.zookeeper.property.clientPort", "2181") //设置zookeeper连接端口，默认2181
+      hbaseConf.set(TableOutputFormat.OUTPUT_TABLE, tableName)
+
+      val connection = ConnectionFactory.createConnection(hbaseConf)
+      val admin = connection.getAdmin
+      if (!admin.tableExists(TableName.valueOf(tableName))){
+        val descriptor = admin.getTableDescriptor(TableName.valueOf("syslog"))
+        //分区的数量
+        val regionNum = 10
+        val splits = hexSplit(regionNum)
+        descriptor.setName(TableName.valueOf(tableName))
+        admin.createTable(descriptor,splits)
+      }
+
+      // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
+      val jobConf = new JobConf(hbaseConf)
+      jobConf.setOutputFormat(classOf[TableOutputFormat])
       userAnalyzeRDD
         .coalesce(800)
         .mapPartitions((per: Iterator[NATBean]) => {
@@ -416,6 +425,8 @@ object DelayNatFlow {
           res.iterator
         })
         .saveAsHadoopDataset(jobConf)
+
+      connection.close()
 
     } catch {
       case e: Exception =>
