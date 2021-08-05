@@ -3,8 +3,8 @@ package com.zjtuojing.utils
 import java.text.SimpleDateFormat
 import java.util.Date
 
-import org.apache.hadoop.hbase.{HBaseConfiguration, TableName}
 import org.apache.hadoop.hbase.client.{Connection, ConnectionFactory, HTable}
+import org.apache.hadoop.hbase.{HBaseConfiguration, TableName}
 
 object HBaseUtils {
 
@@ -54,9 +54,9 @@ object HBaseUtils {
     connection.close()
   }
 
-  import org.apache.hadoop.hbase.util.RegionSplitter
   import java.io.IOException
-  import java.math.BigInteger
+
+  import org.apache.hadoop.hbase.util.RegionSplitter
 
   @throws[IOException]
   def hexSplit(regionNum: Int): Array[Array[Byte]] = {

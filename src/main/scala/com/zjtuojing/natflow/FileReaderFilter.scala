@@ -33,12 +33,14 @@ object FileReaderFilter {
     sc.hadoopConfiguration.set("dfs.client.failover.proxy.provider.nns", properties.getProperty("dfs.client.failover.proxy.provider.nns"))
 
     val hdfs = org.apache.hadoop.fs.FileSystem.get(sc.hadoopConfiguration)
-    val files = hdfs.listFiles(new Path("/nat_log/20210802/"), true)
+    val files = hdfs.listFiles(new Path("/nat_log/20210805/05/06/2021_08_05_050458_a457ef6f4060_hssw-olrs-log-23.log"), true)
     while (files.hasNext) {
       val file = files.next()
-      (file.getPath, file.getLen / 1024 / 1024)
+//      if (file.getAccessTime>=(1628127900000L-300000)&& file.getAccessTime<1628127900000L){
+//        println(file.getPath)
+//      }
+      println(file.getModificationTime)
     }
-
 
   }
 }

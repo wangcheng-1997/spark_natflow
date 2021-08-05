@@ -23,10 +23,11 @@ import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.slf4j.{Logger, LoggerFactory}
-import redis.clients.jedis.Jedis
+import redis.clients.jedis.{Jedis, JedisPool, JedisSentinelPool}
 import scalikejdbc.config.DBs
 import scalikejdbc.{ConnectionPool, DB, SQL}
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 import scala.util.Random
 
@@ -51,15 +52,6 @@ object DelayNatFlow {
   ConnectionPool.singleton(url, userName, password)
 
   DBs.setupAll()
-
-  var jedis: Jedis = null
-  try {
-    val jedisPool = JedisPoolSentine.getJedisPool()
-    jedis = JedisPoolSentine.getJedisClient(jedisPool)
-  } catch {
-    case e: Exception => logger.warn("redis连接异常")
-    case e: java.lang.Exception => logger.warn("redis连接异常")
-  }
 
   def main(args: Array[String]): Unit = {
 
@@ -113,7 +105,7 @@ object DelayNatFlow {
 
     //目录数据样本 hdfs://30.250.60.7/dns_log/2019/12/25/1621_1577262060
     val files = hdfs.listFiles(new Path(s"/nat_log/$date/"), true)
-    var files_old_path: Array[Path] = null
+
     var files_size = 0L
 
     val limit = if (getDataSpeedLimit(spark).length == 1) {
@@ -123,24 +115,50 @@ object DelayNatFlow {
       40
     }
 
+    val block_paths = new ListBuffer[(String, String)]
+    var jedisPool: JedisSentinelPool = null
+    var jedis: Jedis = null
     try {
-      files_old_path = jedis.hkeys("nat:nat_files_delay").toArray().map(per => new Path(per.toString))
+      jedisPool = JedisPoolSentine.getJedisPool()
+      jedis = JedisPoolSentine.getJedisClient(jedisPool)
+    } catch {
+      case e: Exception => logger.warn("redis连接异常")
+      case e: java.lang.Exception => logger.warn("redis连接异常")
+    }
+
+    try {
+      val files_redis_path = jedis.hkeys("nat:nat_files_delay").toArray()
+      val files_old_path = sc.parallelize(files_redis_path)
+        .map(per => (per.toString, 1))
+        .sortByKey()
+        .map(per => new Path(per._1))
+        .collect()
+
       val files_old = hdfs.listStatus(files_old_path).toList.iterator
-      while (files_old.hasNext && (files_size / 1024 <= limit)) {
+      while (files_old.hasNext) {
         val file = files_old.next()
         val filePath = file.getPath
         val file_size = file.getLen / 1024 / 1024
-        paths.append(filePath.toString)
-        files_size = files_size + file_size
+        if (files_size / 1024 <= limit) {
+          paths.append(filePath.toString)
+          files_size = files_size + file_size
+        } else {
+          block_paths.append((filePath.toString, file_size.toString))
+        }
       }
       jedis.del("nat:nat_files_delay")
+      if (block_paths.length != 0) {
+        block_paths.toArray.foreach(per => {
+          jedis.hset("nat:nat_files_delay", per._1, per._2)
+        })
+      }
     } catch {
-      case e: Exception => logger.error("无延迟数据")
+      case e: Exception => logger.error("无延迟数据", e)
     }
 
     while (files.hasNext) {
       val file = files.next()
-      val accessTime = file.getAccessTime
+      val accessTime = file.getModificationTime
       if (accessTime >= batchTime - 300000 && accessTime < batchTime) {
         if (files_size / 1024 <= limit.toInt) {
           val filePath = file.getPath
@@ -148,13 +166,10 @@ object DelayNatFlow {
           paths.append(filePath.toString)
           files_size = files_size + file_size
         } else {
-          val file = files.next()
           val filePath = file.getPath
           val file_size = file.getLen / 1024 / 1024
           jedis.hset("nat:nat_files_delay", filePath.toString, file_size.toString)
         }
-      } else {
-        1 == 1
       }
     }
 
@@ -185,13 +200,15 @@ object DelayNatFlow {
       .map(per => {
         val hostIpList = per.split(" ")(0).split("\\.")
         val hostIp = hostIpList(0) + "." + hostIpList(1) + "." + hostIpList(2) + "." + hostIpList(3)
-        ((batchTime - 300 * 1000, hostIp, Random.nextInt(100)), 1)
+        ((batchTime - 300000, hostIp, Random.nextInt(100)), 1)
       })
       .reduceByKey(_ + _)
       .map(per => ((per._1._1, per._1._2), per._2))
       .reduceByKey(_ + _)
       .map(per => NATReportBean("hostIP", new Timestamp(per._1._1), per._1._2, per._2))
 
+    val format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+    val batchformat = new SimpleDateFormat("yyyy-MM-dd HH:mm")
     // 2 日志Msg解析
     val msgRDD = baseRDD.filter(_.startsWith("Msg"))
       .repartition(800)
@@ -224,7 +241,7 @@ object DelayNatFlow {
             try {
               val msgs = per.split("\\s+")
               val accesstime = msgs(1) + " " + msgs(2)
-              date = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(accesstime).getTime / 1000
+              date = format.parse(accesstime).getTime / 1000
               val information = msgs(4).split(",")
               protocol = information(1).split("=")(1)
               if (msgs.size == 5) {
@@ -256,7 +273,13 @@ object DelayNatFlow {
     userMapsBC.unpersist()
 
     // 2.1 目标IP维度聚合
-    val targetIpDetail = msgRDD.map(per => ((batchTime - 300 * 1000, per.targetIp, Random.nextInt(100)), 1L))
+    val targetIpDetail = msgRDD
+      .map(per => {
+        val msg_time = batchformat.format(per.accesstime * 1000)
+        val time_min = msg_time.substring(14, 16).toInt
+        val accesstime = batchformat.parse(msg_time.replaceAll(":[0-5][0-9]", s":${time_min / 5 * 5}")).getTime
+        ((accesstime, per.targetIp, Random.nextInt(100)), 1L)
+      })
       .reduceByKey(_ + _)
       .map(per => ((per._1._1, per._1._2), per._2))
       .reduceByKey(_ + _)
@@ -304,7 +327,13 @@ object DelayNatFlow {
       .map(per => NATReportBean("city", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2.5 宽带账号维度聚合
-    val username = msgRDD.map(per => ((batchTime - 300 * 1000, per.username, Random.nextInt(100)), 1))
+    val username = msgRDD
+      .map(per => {
+        val msg_time = batchformat.format(per.accesstime * 1000)
+        val time_min = msg_time.substring(14, 16).toInt
+        val accesstime = batchformat.parse(msg_time.replaceAll(":[0-5][0-9]", s":${time_min / 5 * 5}")).getTime
+        ((accesstime, per.username, Random.nextInt(100)), 1L)
+      })
       .reduceByKey(_ + _)
       .map(per => ((per._1._1, per._1._2), per._2))
       .reduceByKey(_ + _)
@@ -320,7 +349,13 @@ object DelayNatFlow {
       .map(per => NATReportBean("username", new Timestamp(per._1._1), per._1._2, per._2))
 
     // 2.6 源ip维度聚合
-    val sourceIp = msgRDD.map(per => ((batchTime - 300 * 1000, per.sourceIp, Random.nextInt(100)), 1))
+    val sourceIp = msgRDD
+      .map(per => {
+        val msg_time = batchformat.format(per.accesstime * 1000)
+        val time_min = msg_time.substring(14, 16).toInt
+        val accesstime = batchformat.parse(msg_time.replaceAll(":[0-5][0-9]", s":${time_min / 5 * 5}")).getTime
+        ((accesstime, per.sourceIp, Random.nextInt(100)), 1L)
+      })
       .reduceByKey(_ + _)
       .map(per => ((per._1._1, per._1._2), per._2))
       .reduceByKey(_ + _)
@@ -346,17 +381,54 @@ object DelayNatFlow {
     try {
       // TODO 日志分析计数写入mysql
       DB.localTx { implicit session =>
-        val nat_count = msgRDD.count()
-        SQL("insert into nat_count (count_5min,count_sec,update_time) values (?,?,?)")
-          .bind(nat_count, nat_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(batchTime - 300 * 1000))
-          .update()
-          .apply()
+        val nat_count = msgRDD
+          .map(per => {
+            val msg_time = batchformat.format(per.accesstime * 1000)
+            val time_min = msg_time.substring(14, 16).toInt
+            val accesstime = batchformat.parse(msg_time.replaceAll(":[0-5][0-9]", s":${time_min / 5 * 5}")).getTime
+            (accesstime, 1L)
+          })
+          .reduceByKey(_ + _)
+          .filter(per => per._1 >= batchTime - 3 * 3600 * 1000)
+          .collect()
 
-        val nat_hbase_count = userAnalyzeRDD.count()
-        SQL("insert into nat_hbase_count (count_5min,count_sec,update_time) values (?,?,?)")
-          .bind(nat_hbase_count, nat_hbase_count / 300, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(batchTime - 300 * 1000))
-          .update()
-          .apply()
+        //        val nat_count_lost = msgRDD
+        //          .map(per => {
+        //            val msg_time = batchformat.format(per.accesstime * 1000)
+        //            val time_min = msg_time.substring(14, 16).toInt
+        //            val accesstime = batchformat.parse(msg_time.replaceAll(":[0-5][0-9]", s":${time_min / 5 * 5}")).getTime
+        //            (accesstime, 1L)
+        //          })
+        //          .reduceByKey(_ + _)
+        //          .filter(per => per._1 <= batchTime - 3 * 3600 * 1000)
+        //          .collect().toList
+        //        logger.info(nat_count_lost.toString())
+
+        nat_count.foreach(per => {
+          SQL("insert into nat_count (count_5min,count_sec,update_time,accesstime) values (?,?,?,?)")
+            .bind(per._2, per._2 / 300, format.format(per._1), format.format(batchTime - 300000))
+            .update()
+            .apply()
+        })
+
+
+        val nat_hbase_count = userAnalyzeRDD
+          .map(per => {
+            val msg_time = batchformat.format(per.accesstime * 1000)
+            val time_min = msg_time.substring(14, 16).toInt
+            val accesstime = batchformat.parse(msg_time.replaceAll(":[0-5][0-9]", s":${time_min / 5 * 5}")).getTime
+            (accesstime, 1L)
+          })
+          .reduceByKey(_ + _)
+          .filter(per => per._1 >= batchTime - 3 * 3600 * 1000)
+          .collect()
+
+        nat_hbase_count.foreach(per => {
+          SQL("insert into nat_hbase_count (count_5min,count_sec,update_time,accesstime) values (?,?,?,?)")
+            .bind(per._2, per._2 / 300, format.format(per._1), format.format(batchTime - 300000))
+            .update()
+            .apply()
+        })
       }
     } catch {
       case e: Exception =>
@@ -380,7 +452,7 @@ object DelayNatFlow {
     }
 
     try {
-      val tableName = "syslog"+date
+      val tableName = "syslog" + date
 
       //     bulkload
       val hbaseConf = HBaseConfiguration.create()
@@ -390,13 +462,13 @@ object DelayNatFlow {
 
       val connection = ConnectionFactory.createConnection(hbaseConf)
       val admin = connection.getAdmin
-      if (!admin.tableExists(TableName.valueOf(tableName))){
+      if (!admin.tableExists(TableName.valueOf(tableName))) {
         val descriptor = admin.getTableDescriptor(TableName.valueOf("syslog"))
         //分区的数量
-        val regionNum = 10
+        val regionNum = 20
         val splits = hexSplit(regionNum)
         descriptor.setName(TableName.valueOf(tableName))
-        admin.createTable(descriptor,splits)
+        admin.createTable(descriptor, splits)
       }
 
       // 初始化job，TableOutputFormat 是 org.apache.hadoop.hbase.mapred 包下的
@@ -411,7 +483,7 @@ object DelayNatFlow {
             val rowkey = Bytes.toBytes(perline.rowkey)
             val put = new Put(rowkey)
 
-            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(perline.accesstime * 1000)))
+            put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("accesstime"), Bytes.toBytes(format.format(perline.accesstime * 1000)))
             put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourceIp"), Bytes.toBytes(perline.sourceIp))
             put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("sourcePort"), Bytes.toBytes(perline.sourcePort))
             put.addColumn(Bytes.toBytes("nat"), Bytes.toBytes("targetIp"), Bytes.toBytes(perline.targetIp))
@@ -439,6 +511,10 @@ object DelayNatFlow {
     targetIpDetail.unpersist()
     msgRDD.unpersist()
     baseRDD.unpersist()
+    if (jedis != null && jedisPool != null) {
+      jedis.close()
+      jedisPool.destroy()
+    }
 
     logger.info("-----------------------------[批处理结束]")
   }
